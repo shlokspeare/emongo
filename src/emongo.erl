@@ -164,9 +164,10 @@ find_all_seq(Collection, Selector, Options) ->
 find_and_remove(PoolId, Collection, Selector, Options) ->
     Selector1 = transform_selector(Selector),
     Collection1 = unicode:characters_to_binary(Collection),
-    OptionsDoc = fam_options(Options, [{<<"query">>, Selector1},
-                                       {<<"remove">>, true}]),
-    Query = #emo_query{q=[{<<"findandmodify">>, Collection1} | OptionsDoc],
+    Query = #emo_query{q=[{<<"findandmodify">>, Collection1},
+                          {<<"query">>, Selector1},
+                          {<<"remove">>, true} |
+                          fam_options(Options)],
                        limit=1},
     {Pid, Database, ReqId} = get_pid_pool(PoolId, 1),
     Packet = emongo_packet:do_query(Database, "$cmd",
@@ -184,9 +185,10 @@ find_and_remove(PoolId, Collection, Selector, Options) ->
 find_and_modify(PoolId, Collection, Selector, Update, Options) ->
     Selector1 = transform_selector(Selector),
     Collection1 = unicode:characters_to_binary(Collection),
-    OptionsDoc = fam_options(Options, [{<<"query">>, Selector1},
-                                       {<<"update">>, Update}]),
-    Query = #emo_query{q=[{<<"findandmodify">>, Collection1} | OptionsDoc],
+    Query = #emo_query{q=[{<<"findandmodify">>, Collection1},
+                          {<<"query">>, Selector1},
+                          {<<"update">>, Update} |
+                          fam_options(Options)],
                        limit=1},
     {Pid, Database, ReqId} = get_pid_pool(PoolId, 1),
     Packet = emongo_packet:do_query(Database, "$cmd",
@@ -497,24 +499,18 @@ create_query([explain | Options], QueryRec, QueryDoc, OptDoc) ->
 create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
     create_query(Options, QueryRec, QueryDoc, OptDoc).
 
-fam_options([], OptDoc) -> OptDoc;
-fam_options([{sort, _}=Opt | Options], OptDoc) ->
-    fam_options(Options, [opt(Opt) | OptDoc]);
-fam_options([{remove, _}=Opt | Options], OptDoc) ->
-    fam_options(Options, [opt(Opt) | OptDoc]);
-fam_options([{update, _} | Options], OptDoc) ->
-    fam_options(Options, OptDoc); % update is a param to find_and_modify/5
-fam_options([{new, _}=Opt | Options], OptDoc) ->
-    fam_options(Options, [opt(Opt) | OptDoc]);
-fam_options([{fields, _}=Opt | Options], OptDoc) ->
-    fam_options(Options, [opt(Opt) | OptDoc]);
-fam_options([{upsert, _}=Opt | Options], OptDoc) ->
-    fam_options(Options, [opt(Opt) | OptDoc]);
-fam_options([_ | Options], OptDoc) ->
-    fam_options(Options, OptDoc).
+fam_options([]) -> [];
+fam_options([{OptCmd, Val} = Option | Rest]) ->
+    BinOptCmd = to_binary(OptCmd),
+    case BinOptCmd of
+        <<"update">> -> throw({oh_balls, {option_not_allowed, Option}});
+        <<"query">>  -> throw({oh_balls, {option_not_allowed, Option}});
+        _            -> [{BinOptCmd, Val} | fam_options(Rest)]
+    end.
 
-opt({Atom, Val}) when is_atom(Atom) ->
-    {list_to_binary(atom_to_list(Atom)), Val}.
+to_binary(V) when is_binary(V) -> V;
+to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V));
+to_binary(V) when is_list(V)   -> list_to_binary(V).
 
 transform_selector(Selector) ->
     transform_selector(Selector, []).
