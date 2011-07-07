@@ -136,6 +136,10 @@ encode_key_value(Key, Val) when is_integer(Val) ->
 	Key1 = encode_key(Key),
 	<<18, Key1/binary, 0, Val:64/little-signed>>;
 
+encode_key_value(Key, {long, Val}) when is_integer(Val) ->
+	Key1 = encode_key(Key),
+	<<18, Key1/binary, 0, Val:64/little-signed>>;
+
 encode_key_value(Key, Val) ->
 	exit({oh_balls, Key, Val}).
 
