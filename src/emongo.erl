@@ -355,18 +355,25 @@ count(PoolId, Collection) ->
 find_and_modify(PoolId, Collection, Selector, Update) ->
 	find_and_modify(PoolId, Collection, Selector, Update, []).
 
-find_and_modify(PoolId, Collection, Selector, Update, Options) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Update), is_list(Options) ->
+find_and_modify(PoolId, Collection, Selector, Update, Options)
+    when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Update), is_list(Options) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Collection1 = to_binary(Collection),
 	Selector1 = transform_selector(Selector),
-	Options1 = [{to_binary(Opt), Val} || {Opt, Val} <- Options],
+  Fields = proplists:get_value(fields, Options, []),
+  FieldSelector = convert_fields(Fields),
+  Options1 = proplists:delete(fields, Options),
+	Options2 = [{to_binary(Opt), Val} || {Opt, Val} <- Options1],
 	Query = #emo_query{q = [{<<"findandmodify">>, Collection1},
 	                        {<<"query">>,         Selector1},
-	                        {<<"update">>,        Update}
-	                        | Options1],
+	                        {<<"update">>,        Update},
+	                        {<<"fields">>,        FieldSelector}
+	                        | Options2],
 	                   limit = 1},
-	Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
-	Resp = emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)),
+	Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
+	                                Query),
+	Resp = emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet,
+	                             proplists:get_value(timeout, Options, ?TIMEOUT)),
 	case lists:member(response_options, Options) of
 		true -> Resp;
 		false -> Resp#response.documents
@@ -605,7 +612,7 @@ create_query([{orderby, Orderby}|Options], QueryRec, QueryDoc, OptDoc) ->
 	create_query(Options, QueryRec, QueryDoc, OptDoc1);
 
 create_query([{fields, Fields}|Options], QueryRec, QueryDoc, OptDoc) ->
-	QueryRec1 = QueryRec#emo_query{field_selector=[{Field, 1} || Field <- Fields]},
+	QueryRec1 = QueryRec#emo_query{field_selector=convert_fields(Fields)},
 	create_query(Options, QueryRec1, QueryDoc, OptDoc);
 
 create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
@@ -692,3 +699,6 @@ get_sync_result(Resp) ->
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
 to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
+
+convert_fields(Fields) ->
+  [{Field, 1} || Field <- Fields].
