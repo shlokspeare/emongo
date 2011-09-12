@@ -10,4 +10,4 @@ check: emake
 	@./rebar eunit skip_deps=true
 
 clean:
-	rm -rf $(wildcard ebin/*.beam) erl_crash.dump
+	rm -rf $(wildcard ebin/*.beam) erl_crash.dump .eunit/
