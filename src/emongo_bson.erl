@@ -31,21 +31,13 @@ encode([{_,_}|_]=List) when is_list(List) ->
 	Bin = iolist_to_binary([encode_key_value(Key, Val) || {Key, Val} <- List]),
 	<<(size(Bin)+5):32/little-signed, Bin/binary, 0:8>>.
 
-encode_key_value(none, none) ->
-    <<>>;
-
 %% FLOAT
 encode_key_value(Key, Val) when is_float(Val) ->
 	Key1 = encode_key(Key),
 	<<1, Key1/binary, 0, Val:64/little-signed-float>>;
 
 %% STRING
-%% binary string must be already in utf8
-encode_key_value(Key, Val) when is_binary(Val) ->
-	Key1 = encode_key(Key),
-    <<2, Key1/binary, 0, (byte_size(Val)+1):32/little-signed, Val/binary, 0:8>>;
-
-encode_key_value(Key, Val) when Val == [] orelse (is_list(Val) andalso length(Val) > 0 andalso is_integer(hd(Val))) ->
+encode_key_value(Key, Val) when is_binary(Val) orelse Val == [] orelse (is_list(Val) andalso length(Val) > 0 andalso is_integer(hd(Val))) ->
 	Key1 = encode_key(Key),
 	case unicode:characters_to_binary(Val) of
 		{error, Bin, RestData} ->
@@ -133,10 +125,6 @@ encode_key_value(Key, Val) when is_integer(Val), Val =< 2147483647, Val >= -2147
 
 % LONG
 encode_key_value(Key, Val) when is_integer(Val) ->
-	Key1 = encode_key(Key),
-	<<18, Key1/binary, 0, Val:64/little-signed>>;
-
-encode_key_value(Key, {long, Val}) when is_integer(Val) ->
 	Key1 = encode_key(Key),
 	<<18, Key1/binary, 0, Val:64/little-signed>>;
 
@@ -237,13 +225,9 @@ decode_value(10, Tail) ->
 decode_value(16, <<Int:32/little-signed, Tail/binary>>) ->
 	{Int, Tail};
 
-%% Timestamp
-decode_value(17, <<Inc:32/little-signed, Timestamp:32/little-signed, Tail/binary>>) ->
-    {{timestamp, Inc, Timestamp}, Tail};
-
 %% LONG
 decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
 	{Int, Tail};
 
-decode_value(Type, Tail) ->
-	exit({emongo_unknown_type, Type, Tail}).
+decode_value(_, _) ->
+	exit(oh_fuck).

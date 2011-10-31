@@ -24,27 +24,9 @@
 
 -export([update/7, insert/4, do_query/4, get_more/5,
 		 delete/4, kill_cursors/2, msg/2, decode_response/1,
-		 ensure_index/4, get_last_error/2, server_status/2]).
+		 ensure_index/4]).
 
 -include("emongo.hrl").
-
-get_last_error(Database, ReqId) ->
-    %%Query = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
-    %%do_query(Database, "$cmd", ReqId, Query).
-    DatabaseLength = byte_size(Database),
-    <<(57+DatabaseLength):32/little-signed, ReqId:32/little-signed, 0:32,
-     ?OP_QUERY:32/little-signed, 0:32, Database/binary, ".$cmd", 0, 0:32, 1:32/little-signed,
-     %% Encoded document
-     23:32/little-signed, 16, "getlasterror", 0, 1:32/little-signed, 0>>.
-
-server_status(Database, ReqId) ->
-    %%Query = #emo_query{q=[{<<"serverStatus">>, 1}], limit=1},
-    %%do_query(Database, "$cmd", ReqId, Query).
-    DatabaseLength = byte_size(Database),
-    <<(57+DatabaseLength):32/little-signed, ReqId:32/little-signed, 0:32,
-     ?OP_QUERY:32/little-signed, 0:32, Database/binary, ".$cmd", 0, 0:32, 1:32/little-signed,
-     %% Encoded document
-     23:32/little-signed, 16, "serverStatus", 0, 1:32/little-signed, 0>>.
 
 update(Database, Collection, ReqID, Upsert, Multi, Selector, Document) ->
 	FullName = unicode:characters_to_binary([Database, ".", Collection]),
@@ -53,8 +35,7 @@ update(Database, Collection, ReqID, Upsert, Multi, Selector, Document) ->
 	BinUpsert = if Upsert == true -> 1; true -> 0 end,
   BinMulti  = if Multi  == true -> 1; true -> 0 end,
   Flags     = (BinMulti bsl 1) bor BinUpsert,
-	Message = <<0:32, FullName/binary, 0, Flags:32/little-signed,
-	            EncodedSelector/binary, EncodedDocument/binary>>,
+	Message = <<0:32, FullName/binary, 0, Flags:32/little-signed, EncodedSelector/binary, EncodedDocument/binary>>,
 	Length = byte_size(Message),
   <<(Length+16):32/little-signed, ReqID:32/little-signed, 0:32,
     ?OP_UPDATE:32/little-signed, Message/binary>>.
@@ -132,10 +113,7 @@ decode_response(<<Length:32/little-signed, ReqID:32/little-signed, RespTo:32/lit
 			  Documents:DocLen/binary,
 			  Tail/binary>> = Message,
 			Resp = #response{
-				header = #header{message_length = Length,
-                                                 request_id = ReqID,
-                                                 response_to = RespTo,
-                                                 op_code = Op},
+				header = {header, Length, ReqID, RespTo, Op},
 				response_flag = RespFlag,
 				cursor_id = CursorID,
 				offset = StartingFrom,
@@ -144,9 +122,10 @@ decode_response(<<Length:32/little-signed, ReqID:32/little-signed, RespTo:32/lit
 			},
 			{Resp, Tail}
 	end;
-
+% If there aren't even enough bytes to fill out the header information above,
+% return undefined because the message is not complete.
 decode_response(_) ->
-    undefined.
+	undefined.
 
 index_name([], Bin) -> Bin;
 index_name([{Key, Val}|Tail], Bin) ->
