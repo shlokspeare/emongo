@@ -471,6 +471,8 @@ handle_call(_, _From, State) -> {reply, {error, invalid_call}, State}.
 %%                                      {stop, Reason, State}
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
+handle_cast(reconnect_pools, State) ->
+    {noreply, reconnect_pools(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -483,6 +485,7 @@ handle_cast(_Msg, State) ->
 handle_info({'EXIT', Pid, {emongo_conn, PoolId, Error}}, #state{pools=Pools}=State) ->
 	io:format("EXIT ~p, {emongo_conn, ~p, ~p} in ~p~n",
 	          [Pid, PoolId, Error, ?MODULE]),
+	% Remove the exited Pid from its pool:
 	State1 =
 		case get_pool(PoolId, Pools) of
 			undefined ->
@@ -490,15 +493,10 @@ handle_info({'EXIT', Pid, {emongo_conn, PoolId, Error}}, #state{pools=Pools}=Sta
 			{Pool, Others} ->
 				Pids1 = queue:filter(fun(Item) -> Item =/= Pid end, Pool#pool.conn_pids),
 				Pool1 = Pool#pool{conn_pids = Pids1},
-                case do_open_connections(Pool1) of
-                    {error, _Reason} ->
-                        Pools1 = Others;
-                    Pool2 ->
-                        Pools1 = [{PoolId, Pool2}|Others]
-                end,
-				State#state{pools=Pools1}
+				State#state{pools=[{PoolId, Pool1} | Others]}
 		end,
-	{noreply, State1};
+	State2 = reconnect_pools(State1),
+	{noreply, State2};
 
 handle_info(Info, State) ->
 	io:format("WARNING: unrecognized message in ~p: ~p~n", [?MODULE, Info]),
@@ -541,11 +539,26 @@ initialize_pools() ->
 			 end || {PoolId, Props} <- Pools]
 	end.
 
+reconnect_pools(#state{pools = Pools} = State) ->
+	Pools1 = lists:map(fun({PoolId, Pool}) ->
+		Pool1 = case do_open_connections(Pool) of
+			{error, _Reason} ->
+				timer:apply_after(?RETRY_TIME, gen_server, cast, [?MODULE, reconnect_pools]),
+				Pool;
+			Pool2 ->
+				Pool2
+		end,
+		{PoolId, Pool1}
+	end, Pools),
+	State#state{pools=Pools1}.
+
 do_open_connections(#pool{conn_pids=Pids, size=Size}=Pool) ->
 	case queue:len(Pids) < Size of
 		true ->
             case emongo_conn:start_link(Pool#pool.id, Pool#pool.host, Pool#pool.port) of
                 {error, Reason} ->
+                    % TODO: If some but not all processes have been created, they
+                    %       will be stranded if we just return an error.
                     {error, Reason};
                 Pid ->
                     do_open_connections(Pool#pool{conn_pids = queue:in(Pid, Pids)})
