@@ -22,20 +22,38 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_packet).
 
--export([update/7, insert/4, do_query/4, get_more/5,
+-export([update/7, insert/4, do_query/4, get_more/5, 
 		 delete/4, kill_cursors/2, msg/2, decode_response/1,
-		 ensure_index/4]).
+		 ensure_index/5, get_last_error/2, server_status/2]).
 
 -include("emongo.hrl").
 
-update(Database, Collection, ReqID, Upsert, Multi, Selector, Document) ->
+get_last_error(Database, ReqId) ->
+    %%Query = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
+    %%do_query(Database, "$cmd", ReqId, Query).
+    DatabaseLength = byte_size(Database),
+    <<(57+DatabaseLength):32/little-signed, ReqId:32/little-signed, 0:32,
+     ?OP_QUERY:32/little-signed, 0:32, Database/binary, ".$cmd", 0, 0:32, 1:32/little-signed,
+     %% Encoded document
+     23:32/little-signed, 16, "getlasterror", 0, 1:32/little-signed, 0>>.
+
+server_status(Database, ReqId) ->
+    %%Query = #emo_query{q=[{<<"serverStatus">>, 1}], limit=1},
+    %%do_query(Database, "$cmd", ReqId, Query).
+    DatabaseLength = byte_size(Database),
+    <<(57+DatabaseLength):32/little-signed, ReqId:32/little-signed, 0:32,
+     ?OP_QUERY:32/little-signed, 0:32, Database/binary, ".$cmd", 0, 0:32, 1:32/little-signed,
+     %% Encoded document
+     23:32/little-signed, 16, "serverStatus", 0, 1:32/little-signed, 0>>.
+
+update(Database, Collection, ReqID, Upsert, MultiUpdate, Selector, Document) ->
 	FullName = unicode:characters_to_binary([Database, ".", Collection]),
 	EncodedSelector = emongo_bson:encode(Selector),
 	EncodedDocument = emongo_bson:encode(Document),
 	BinUpsert = if Upsert == true -> 1; true -> 0 end,
-  BinMulti  = if Multi  == true -> 1; true -> 0 end,
-  Flags     = (BinMulti bsl 1) bor BinUpsert,
-	Message = <<0:32, FullName/binary, 0, Flags:32/little-signed, EncodedSelector/binary, EncodedDocument/binary>>,
+	BinMultiUpdate = if MultiUpdate == true -> 2#10; true -> 0 end,
+	OptsSum = BinUpsert + BinMultiUpdate,
+	Message = <<0:32, FullName/binary, 0, OptsSum:32/little-signed, EncodedSelector/binary, EncodedDocument/binary>>,
 	Length = byte_size(Message),
     <<(Length+16):32/little-signed, ReqID:32/little-signed, 0:32, ?OP_UPDATE:32/little-signed, Message/binary>>.
 
@@ -77,12 +95,13 @@ delete(Database, Collection, ReqID, Selector) ->
 	Length = byte_size(Message),
     <<(Length+16):32/little-signed, ReqID:32/little-signed, 0:32, ?OP_DELETE:32/little-signed, Message/binary>>.
 
-ensure_index(Database, Collection, ReqID, Keys) ->
+ensure_index(Database, Collection, ReqID, Keys, Unique) ->
 	FullName = unicode:characters_to_binary([Database, ".system.indexes"]),
 	Selector = [
 		{<<"name">>, index_name(Keys, <<>>)},
 		{<<"ns">>, unicode:characters_to_binary([Database, ".", Collection])},
-		{<<"key">>, Keys}],
+		{<<"key">>, Keys},
+                {<<"unique">>, Unique}],
 	EncodedDocument = emongo_bson:encode(Selector),
 	Message = <<0:32, FullName/binary, 0, EncodedDocument/binary>>,
 	Length = byte_size(Message),
@@ -112,7 +131,10 @@ decode_response(<<Length:32/little-signed, ReqID:32/little-signed, RespTo:32/lit
 			  Documents:DocLen/binary,
 			  Tail/binary>> = Message,
 			Resp = #response{
-				header = {header, Length, ReqID, RespTo, Op},
+				header = #header{message_length = Length,
+                                                 request_id = ReqID,
+                                                 response_to = RespTo,
+                                                 op_code = Op},
 				response_flag = RespFlag,
 				cursor_id = CursorID,
 				offset = StartingFrom,
@@ -121,10 +143,9 @@ decode_response(<<Length:32/little-signed, ReqID:32/little-signed, RespTo:32/lit
 			},
 			{Resp, Tail}
 	end;
-% If there aren't even enough bytes to fill out the header information above,
-% return undefined because the message is not complete.
+
 decode_response(_) ->
-	undefined.
+    undefined.
 
 index_name([], Bin) -> Bin;
 index_name([{Key, Val}|Tail], Bin) ->
