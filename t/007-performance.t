@@ -12,15 +12,13 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 main(_) ->
-    etap:plan(unknown),
-    error_logger:tty(false),
-    etap:ok(application:start(emongo) == ok, "application 'emongo' started ok"),
-    emongo:delete(?POOL, ?COLL, []),
-    (fun() ->
-             test_performance()
-     end)(),
-    emongo:delete(?POOL, ?COLL, []),
-    etap:end_tests().
+  etap:plan(unknown),
+  error_logger:tty(false),
+  etap:ok(application:start(emongo) == ok, "application 'emongo' started ok"),
+  emongo:delete(?POOL, ?COLL, []),
+  (fun() -> test_performance() end)(),
+  emongo:delete(?POOL, ?COLL, []),
+  etap:end_tests().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -53,29 +51,22 @@ run_tests(Pid, X, Y) ->
   Num = (X bsl 16) bor Y, % Make up a unique number for this run
   try
     IRes = emongo:insert_sync(?POOL, ?COLL, [{"_id", Num}]),
-    ok = check_result(IRes),
-    %etap:is(check_result(IRes), ok, "insert_sync ok"),
+    ok = check_result("insert_sync", IRes, 0),
 
     FMRes = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"fm">>, Num}]}], [{new, true}]),
     [[{<<"value">>, [{<<"_id">>, Num}, {<<"fm">>, Num}]}, {<<"ok">>, 1.0}]] =
       FMRes,
-    %etap:is(FMRes, [[{<<"value">>, [{<<"_id">>, Num}, {<<"fm">>, Num}]},
-    %                 {<<"ok">>, 1.0}]], "find_all ok"),
 
     URes = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"us">>, Num}]}], false),
-    ok = check_result(URes),
-    %etap:is(check_result(URes), ok, "update_sync ok"),
+    ok = check_result("update_sync", URes, 1),
 
     FARes = emongo:find_all(?POOL, ?COLL, [{"_id", Num}]),
     [[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]] = FARes,
-    %etap:is(FARes, [[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]],
-    %        "find_all ok"),
 
     DRes = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}]),
-    ok = check_result(DRes)
-    %etap:is(check_result(DRes), ok, "delete_sync ok")
+    ok = check_result("delete_sync", DRes, 1)
   catch _:E ->
     ?OUT("Exception occurred for test ~.16b: ~p\n~p\n",
          [Num, E, erlang:get_stacktrace()]),
@@ -98,10 +89,11 @@ cur_time_ms() ->
   {MegaSec, Sec, MicroSec} = erlang:now(),
   MegaSec * 1000000000 + Sec * 1000 + erlang:round(MicroSec / 1000).
 
-check_result([List]) when is_list(List) -> check_result_int(List);
-check_result(_)                         -> {error, invalid_result}.
-
-check_result_int([])                       -> {error, result_unknown};
-check_result_int([{<<"err">>, null} | _])  -> ok;
-check_result_int([{<<"err">>, Error} | _]) -> {error, Error};
-check_result_int([_ | Rest])               -> check_result_int(Rest).
+check_result(Desc, [List], ExpectedN) when is_list(List) ->
+  {_, Err} = lists:keyfind(<<"err">>, 1, List),
+  {_, N}   = lists:keyfind(<<"n">>,   1, List),
+  if Err == null, N == ExpectedN -> ok;
+  true ->
+    ?OUT("Unexpected result for ~p: Err = ~p; N = ~p", [Desc, Err, N]),
+    throw({error, invalid_db_response})
+  end.
