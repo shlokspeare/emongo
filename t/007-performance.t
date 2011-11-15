@@ -15,15 +15,14 @@ main(_) ->
   etap:plan(unknown),
   error_logger:tty(false),
   etap:ok(application:start(emongo) == ok, "application 'emongo' started ok"),
-  emongo:delete(?POOL, ?COLL, []),
   (fun() -> test_performance() end)(),
-  emongo:delete(?POOL, ?COLL, []),
   etap:end_tests().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 test_performance() ->
   ?OUT("Testing performance", []),
+  emongo:delete_sync(?POOL, ?COLL, []),
   Start = cur_time_ms(),
   try
     start_processes(?NUM_PROCESSES),

@@ -115,8 +115,7 @@ synchronous() ->
     synchronous(?TIMEOUT).
 
 synchronous(Timeout) ->
-    [fun(_, _, _) -> ok end,
-     fun(Pid, Database, ReqId) ->
+    [fun(Pid, Database, ReqId) ->
              PacketGetLastError = emongo_packet:get_last_error(Database, ReqId),
              Resp = emongo_server:send_recv(Pid, ReqId, PacketGetLastError, Timeout),
              Resp#response.documents
@@ -157,10 +156,9 @@ find_all(PoolId, Collection, Selector, Options) ->
 
 
 find_all_seq(Collection, Selector, Options) ->
-    [Fun0,Fun1] = fold_all_seq(fun(I, A) -> [I | A] end, [], Collection, Selector, Options),
+    [Fun1] = fold_all_seq(fun(I, A) -> [I | A] end, [], Collection, Selector, Options),
 
-    [Fun0,
-     fun(Pid, Database, ReqId) ->
+    [fun(Pid, Database, ReqId) ->
              lists:reverse(Fun1(Pid, Database, ReqId))
      end].
 
@@ -194,8 +192,7 @@ fold_all(F, Value, PoolId, Collection, Selector, Options) ->
 fold_all_seq(F, Value, Collection, Selector, Options) ->
     Timeout = proplists:get_value(timeout, Options, ?TIMEOUT),
     Query = create_query(Options, Selector),
-    [fun(_, _, _) -> ok end,
-     fun(Pid, Database, ReqId) ->
+    [fun(Pid, Database, ReqId) ->
              Packet = emongo_packet:do_query(Database, Collection, ReqId, Query),
              Resp = emongo_server:send_recv(Pid, ReqId, Packet, Timeout),
 
