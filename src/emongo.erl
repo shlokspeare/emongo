@@ -542,7 +542,7 @@ do_open_connections(#pool{conn_pids=Pids, size=Size}=Pool) ->
 		true ->
             case emongo_conn:start_link(Pool#pool.id, Pool#pool.host, Pool#pool.port) of
                 {error, Reason} ->
-                    {error, Reason};
+                    throw({error, Reason});
                 Pid ->
                     do_open_connections(Pool#pool{conn_pids = queue:in(Pid, Pids)})
             end;
