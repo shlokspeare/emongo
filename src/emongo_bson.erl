@@ -229,5 +229,5 @@ decode_value(16, <<Int:32/little-signed, Tail/binary>>) ->
 decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
 	{Int, Tail};
 
-decode_value(_, _) ->
-	exit(emongo_bson_error).
+decode_value(Type, Value) ->
+	exit({emongo_bson_error, Type, Value}).
