@@ -230,4 +230,4 @@ decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
 	{Int, Tail};
 
 decode_value(_, _) ->
-	exit(oh_fuck).
+	exit(emongo_bson_error).
