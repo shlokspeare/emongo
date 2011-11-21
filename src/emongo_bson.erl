@@ -129,7 +129,7 @@ encode_key_value(Key, Val) when is_integer(Val) ->
 	<<18, Key1/binary, 0, Val:64/little-signed>>;
 
 encode_key_value(Key, Val) ->
-	exit({oh_balls, Key, Val}).
+	exit({emongo_bson_encode_error, Key, Val}).
 
 encode_key(Key) when is_binary(Key) ->
 	Key;
@@ -230,4 +230,4 @@ decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
 	{Int, Tail};
 
 decode_value(Type, Value) ->
-	exit({emongo_bson_error, Type, Value}).
+	exit({emongo_bson_decode_error, Type, Value}).
