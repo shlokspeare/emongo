@@ -611,6 +611,10 @@ create_query([{fields, Fields}|Options], QueryRec, QueryDoc, OptDoc) ->
 	QueryRec1 = QueryRec#emo_query{field_selector=convert_fields(Fields)},
 	create_query(Options, QueryRec1, QueryDoc, OptDoc);
 
+create_query([Opt|Options], QueryRec, QueryDoc, OptDoc) when is_integer(Opt) ->
+	QueryRec1 = QueryRec#emo_query{opts=[Opt|QueryRec#emo_query.opts]},
+	create_query(Options, QueryRec1, QueryDoc, OptDoc);
+
 create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
 	create_query(Options, QueryRec, QueryDoc, OptDoc).
 

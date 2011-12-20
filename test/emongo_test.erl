@@ -59,10 +59,10 @@ run_tests(Pid, X, Y) ->
     IRes = emongo:insert_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
     ok = check_result("insert_sync", IRes, 0),
 
-    FMRes = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
+    [FMRes] = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"fm">>, Num}]}], [{new, true}]),
-    [[{<<"value">>, [{<<"_id">>, Num}, {<<"fm">>, Num}]},
-      {<<"ok">>, 1.0}]] = FMRes,
+    FMVal = proplists:get_value(<<"value">>, FMRes),
+    [{<<"_id">>, Num}, {<<"fm">>, Num}] = FMVal,
 
     URes = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
