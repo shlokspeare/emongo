@@ -29,9 +29,10 @@
 -export([pools/0, oid/0, oid_generation_time/1, add_pool/5, remove_pool/1,
          auth/3, find/2, find/3, find/4, find_all/2, find_all/3, find_all/4,
          get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
-		 insert/3, insert_sync/3, update/4, update/5, update_all/4,
-		 update_sync/4, update_sync/5, update_all_sync/4, delete/2, delete/3,
-		 delete_sync/2, delete_sync/3, ensure_index/3, count/2,
+		 insert/3, insert_sync/3, insert_sync/4, update/4, update/5,
+		 update_all/4, update_sync/4, update_sync/5, update_sync/6,
+		 update_all_sync/4, update_all_sync/5, delete/2, delete/3,
+		 delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/3, count/2,
 		 find_and_modify/4, find_and_modify/5, dec2hex/1, hex2dec/1]).
 
 -include("emongo.hrl").
@@ -237,13 +238,18 @@ insert(PoolId, Collection, Documents) when ?IS_LIST_OF_DOCUMENTS(Documents) ->
 %%------------------------------------------------------------------------------
 %% insert_sync that runs db.$cmd.findOne({getlasterror: 1});
 %%------------------------------------------------------------------------------
-insert_sync(PoolId, Collection, Document) when ?IS_DOCUMENT(Document) ->
-	insert_sync(PoolId, Collection, [Document]);
+insert_sync(PoolId, Collection, Documents) ->
+  insert_sync(PoolId, Collection, Documents, []).
 
-insert_sync(PoolId, Collection, Documents) when ?IS_LIST_OF_DOCUMENTS(Documents) ->
+insert_sync(PoolId, Collection, DocumentsIn, Options) ->
+    Documents = if
+        ?IS_LIST_OF_DOCUMENTS(DocumentsIn) -> DocumentsIn;
+        ?IS_DOCUMENT(DocumentsIn)          -> [DocumentsIn]
+    end,
+
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:insert(Pool#pool.database, Collection, Pool#pool.req_id, Documents),
-	sync_command({Pid, Pool}, Packet1, []).
+	sync_command({Pid, Pool}, Packet1, Options).
 
 %%------------------------------------------------------------------------------
 %% update
@@ -271,39 +277,26 @@ update_sync(PoolId, Collection, Selector, Document) when ?IS_DOCUMENT(Selector),
 	update_sync(PoolId, Collection, Selector, Document, false).
 
 update_sync(PoolId, Collection, Selector, Document, Upsert) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
+    update_sync(PoolId, Collection, Selector, Document, Upsert, []).
+
+update_sync(PoolId, Collection, Selector, Document, Upsert, Options) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:update(Pool#pool.database, Collection, Pool#pool.req_id, Upsert, false, Selector, Document),
-	Resp = sync_command({Pid, Pool}, Packet1, [response_options]),
-	% Check to make sure a more significant error has not occurred before
-	% checking to see if a document got updated.
-	case get_sync_result(Resp) of
-		ok ->
-			% Check to see if a document got updated.
-			case Resp#response.documents of
-				[Doc] ->
-					% For some reason, <<"updateExisting">> doesn't always show
-					% up in the response from the DB.  On the other hand,
-					% <<"n">> seems more reliable.
-					case lists:keysearch(<<"n">>, 1, Doc) of
-						{value, {_, 1}} -> ok;
-						{value, _} -> {error, not_updated};
-						_ -> {error, {invalid_error_message, Doc}}
-					end;
-				_ -> {error, {invalid_response, Resp}}
-			end;
-		Err -> Err
-	end.
+	sync_command({Pid, Pool}, Packet1, Options).
 
 %%------------------------------------------------------------------------------
 %% update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
 %%------------------------------------------------------------------------------
 update_all_sync(PoolId, Collection, Selector, Document) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
+    update_all_sync(PoolId, Collection, Selector, Document, []).
+
+update_all_sync(PoolId, Collection, Selector, Document, Options) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:update(Pool#pool.database, Collection, Pool#pool.req_id, false, true, Selector, Document),
 	% We could check <<"n">> as the update_sync(...) functions do, but
 	% update_all_sync(...) isn't targeting a specific number of documents, so 0
 	% updates is legitimate.
-	sync_command({Pid, Pool}, Packet1, []).
+	sync_command({Pid, Pool}, Packet1, Options).
 
 %%------------------------------------------------------------------------------
 %% delete
@@ -323,9 +316,12 @@ delete_sync(PoolId, Collection) ->
 	delete_sync(PoolId, Collection, []).
 
 delete_sync(PoolId, Collection, Selector) ->
+    delete_sync(PoolId, Collection, Selector, []).
+
+delete_sync(PoolId, Collection, Selector, Options) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:delete(Pool#pool.database, Collection, Pool#pool.req_id, transform_selector(Selector)),
-	sync_command({Pid, Pool}, Packet1, []).
+	sync_command({Pid, Pool}, Packet1, Options).
 
 %%------------------------------------------------------------------------------
 %% ensure index
@@ -546,7 +542,7 @@ do_open_connections(#pool{conn_pids=Pids, size=Size}=Pool) ->
 		true ->
             case emongo_conn:start_link(Pool#pool.id, Pool#pool.host, Pool#pool.port) of
                 {error, Reason} ->
-                    {error, Reason};
+                    throw({error, Reason});
                 Pid ->
                     do_open_connections(Pool#pool{conn_pids = queue:in(Pid, Pids)})
             end;

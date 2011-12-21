@@ -1,5 +1,5 @@
 %% Copyright (c) 2009 Jacob Vorreuter <jacob.vorreuter@gmail.com>
-%% 
+%%
 %% Permission is hereby granted, free of charge, to any person
 %% obtaining a copy of this software and associated documentation
 %% files (the "Software"), to deal in the Software without
@@ -8,10 +8,10 @@
 %% copies of the Software, and to permit persons to whom the
 %% Software is furnished to do so, subject to the following
 %% conditions:
-%% 
+%%
 %% The above copyright notice and this permission notice shall be
 %% included in all copies or substantial portions of the Software.
-%% 
+%%
 %% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 %% EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
 %% OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -23,14 +23,15 @@
 -module(emongo_app).
 -behaviour(application).
 
--export([start/2,stop/1, init/1]).
+-export([start/2, stop/1]).
 
 start(_, _) ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    emongo:start_link().
+    %supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 stop(_) -> ok.
 
-init(_) ->
-   {ok, {{one_for_one, 10, 10}, [
-       {emongo, {emongo, start_link, []}, permanent, 5000, worker, [emongo]}
-   ]}}.
+%init(_) ->
+%   {ok, {{one_for_one, 10, 10}, [
+%       {emongo, {emongo, start_link, []}, permanent, 5000, worker, [emongo]}
+%   ]}}.

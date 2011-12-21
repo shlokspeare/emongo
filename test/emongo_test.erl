@@ -7,11 +7,12 @@
 -define(POOL,              pool1).
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           5000).
+-define(OUT(F, D),         ?debugFmt(F, D)).
 
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
-  emongo:add_pool(?POOL, "localhost", 27017, "TEST", 10),
+  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
   ok.
 
 cleanup(_) ->
@@ -29,9 +30,9 @@ run_test_() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 test_performance() ->
-  ?debugFmt("Testing performance.", []),
+  ?OUT("Testing performance.", []),
+  emongo:delete_sync(?POOL, ?COLL),
   Start = cur_time_ms(),
-
   try
     start_processes(?NUM_PROCESSES),
     block_until_done(?NUM_PROCESSES)
@@ -39,9 +40,8 @@ test_performance() ->
     % Clean up in case something failed.
     emongo:delete_sync(?POOL, ?COLL)
   end,
-
   End = cur_time_ms(),
-  ?debugFmt("Test passed in ~p ms\n", [End - Start]).
+  ?OUT("Test passed in ~p ms\n", [End - Start]).
 
 start_processes(X) when X =< 0 -> ok;
 start_processes(X) ->
@@ -56,22 +56,25 @@ run_tests(Pid, _, Y) when Y =< 0 ->
 run_tests(Pid, X, Y) ->
   Num = (X bsl 16) bor Y, % Make up a unique number for this run
   try
-    ok = emongo:insert_sync(?POOL, ?COLL, [{"_id", Num}]),
+    IRes = emongo:insert_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
+    ok = check_result("insert_sync", IRes, 0),
 
     FMRes = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"fm">>, Num}]}], [{new, true}]),
     [[{<<"value">>, [{<<"_id">>, Num}, {<<"fm">>, Num}]},
       {<<"ok">>, 1.0}]] = FMRes,
 
-    ok = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
-      [{<<"$set">>, [{<<"us">>, Num}]}]),
+    URes = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
+      [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
+    ok = check_result("update_sync", URes, 1),
 
     FARes = emongo:find_all(?POOL, ?COLL, [{"_id", Num}]),
     [[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]] = FARes,
 
-    ok = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}])
+    DRes = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
+    ok = check_result("delete_sync", DRes, 1)
   catch _:E ->
-    ?debugFmt("Exception occurred for test ~.16b: ~p\n~p\n",
+    ?OUT("Exception occurred for test ~.16b: ~p\n~p\n",
               [Num, E, erlang:get_stacktrace()]),
     throw(test_failed)
   end,
@@ -81,7 +84,7 @@ block_until_done(X) when X =< 0 -> ok;
 block_until_done(X) ->
   receive done -> ok
   after ?TIMEOUT ->
-    ?debugFmt("No response\n", []),
+    ?OUT("No response\n", []),
     throw(test_failed)
   end,
   block_until_done(X - 1).
@@ -97,3 +100,14 @@ ensure_started(App) ->
 cur_time_ms() ->
   {MegaSec, Sec, MicroSec} = erlang:now(),
   MegaSec * 1000000000 + Sec * 1000 + erlang:round(MicroSec / 1000).
+
+check_result(Desc,
+             {response, _,_,_,_,_, [List]},
+             ExpectedN) when is_list(List) ->
+  {_, Err} = lists:keyfind(<<"err">>, 1, List),
+  {_, N}   = lists:keyfind(<<"n">>,   1, List),
+  if Err == undefined, N == ExpectedN -> ok;
+  true ->
+    ?OUT("Unexpected result for ~p: Err = ~p; N = ~p", [Desc, Err, N]),
+    throw({error, invalid_db_response})
+  end.
