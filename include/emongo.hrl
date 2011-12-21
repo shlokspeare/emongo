@@ -27,6 +27,7 @@
 -define(OP_DELETE, 2006).
 -define(OP_KILL_CURSORS, 2007).
 
+% Additional options that can be passed to emongo:find()
 -define(TAILABLE_CURSOR, 2).
 -define(SLAVE_OK, 4).
 -define(OPLOG, 8).
