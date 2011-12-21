@@ -1,3 +1,5 @@
+-include_lib("emongo_public.hrl").
+
 -record(pool, {id, host, port, database, size=1, conn_pids=queue:new(), req_id=1}).
 -record(header, {message_length, request_id, response_to, op_code}).
 -record(response, {header, response_flag, cursor_id, offset, limit, documents}).
@@ -26,9 +28,3 @@
 -define(OP_GET_MORE, 2005).
 -define(OP_DELETE, 2006).
 -define(OP_KILL_CURSORS, 2007).
-
-% Additional options that can be passed to emongo:find()
--define(TAILABLE_CURSOR, 2).
--define(SLAVE_OK, 4).
--define(OPLOG, 8).
--define(NO_CURSOR_TIMEOUT, 16).
