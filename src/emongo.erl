@@ -199,7 +199,7 @@ find_one(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
 	find_one(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]).
 
 find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector), is_list(Options) ->
-	Options1 = [{limit, 1} | lists:delete(limit, Options)],
+	Options1 = [{limit, 1} | lists:keydelete(limit, 1, Options)],
 	find(PoolId, Collection, Selector, Options1).
 
 %%------------------------------------------------------------------------------
