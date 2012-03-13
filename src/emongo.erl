@@ -615,8 +615,9 @@ create_query([Opt|Options], QueryRec, QueryDoc, OptDoc) when is_integer(Opt) ->
 	QueryRec1 = QueryRec#emo_query{opts=[Opt|QueryRec#emo_query.opts]},
 	create_query(Options, QueryRec1, QueryDoc, OptDoc);
 
-create_query([{Name, Val} | Options], QueryRec, QueryDoc, OptDoc) ->
-	create_query(Options, QueryRec, QueryDoc, [{to_binary(Name), Val} | OptDoc]);
+create_query([{<<"$", _/binary>>, _} = NV | Options], QueryRec, QueryDoc,
+             OptDoc) ->
+	create_query(Options, QueryRec, QueryDoc, [NV | OptDoc]);
 
 create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
 	create_query(Options, QueryRec, QueryDoc, OptDoc).
