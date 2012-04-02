@@ -33,7 +33,8 @@
 		 update_all/4, update_sync/4, update_sync/5, update_sync/6,
 		 update_all_sync/4, update_all_sync/5, delete/2, delete/3,
 		 delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/3, count/2,
-		 find_and_modify/4, find_and_modify/5, dec2hex/1, hex2dec/1]).
+		 count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
+		 hex2dec/1]).
 
 -include("emongo.hrl").
 
@@ -199,7 +200,7 @@ find_one(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
 	find_one(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]).
 
 find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector), is_list(Options) ->
-	Options1 = [{limit, 1} | lists:delete(limit, Options)],
+	Options1 = [{limit, 1} | lists:keydelete(limit, 1, Options)],
 	find(PoolId, Collection, Selector, Options1).
 
 %%------------------------------------------------------------------------------
@@ -335,9 +336,17 @@ ensure_index(PoolId, Collection, Keys) when ?IS_DOCUMENT(Keys)->
 %% count
 %%------------------------------------------------------------------------------
 count(PoolId, Collection) ->
+  count(PoolId, Collection, [], []).
+
+count(PoolId, Collection, Selector) ->
+  count(PoolId, Collection, Selector, []).
+
+count(PoolId, Collection, Selector, Options) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-	Query = #emo_query{q=[{<<"count">>, Collection}, {<<"ns">>, Pool#pool.database}], limit=1},
-	Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  Query = create_query([{<<"count">>, Collection}, {limit, 1} | Options],
+                       Selector),
+	Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
+	                                Query),
 	case emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT) of
 		#response{documents=[[{<<"n">>,Count}|_]]} ->
 			round(Count);
@@ -614,6 +623,9 @@ create_query([{fields, Fields}|Options], QueryRec, QueryDoc, OptDoc) ->
 create_query([Opt|Options], QueryRec, QueryDoc, OptDoc) when is_integer(Opt) ->
 	QueryRec1 = QueryRec#emo_query{opts=[Opt|QueryRec#emo_query.opts]},
 	create_query(Options, QueryRec1, QueryDoc, OptDoc);
+
+create_query([{<<_/binary>>, _} = NV | Options], QueryRec, QueryDoc, OptDoc) ->
+	create_query(Options, QueryRec, QueryDoc, [NV | OptDoc]);
 
 create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
 	create_query(Options, QueryRec, QueryDoc, OptDoc).
