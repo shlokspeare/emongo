@@ -27,7 +27,7 @@
 		 handle_info/2, terminate/2, code_change/3]).
 
 -export([pools/0, oid/0, oid_generation_time/1, add_pool/5, remove_pool/1,
-         auth/3, find/2, find/3, find/4, find_all/2, find_all/3, find_all/4,
+         auth/3, find_all/2, find_all/3, find_all/4,
          get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
 		 insert/3, insert_sync/3, insert_sync/4, update/4, update/5,
 		 update_all/4, update_sync/4, update_sync/5, update_sync/6,
@@ -131,17 +131,17 @@ getnonce(Pid, Pool) ->
 %%------------------------------------------------------------------------------
 %% find
 %%------------------------------------------------------------------------------
-find(PoolId, Collection) ->
-	find(PoolId, Collection, [], [{timeout, ?TIMEOUT}]).
+%find(PoolId, Collection) ->
+%	find(PoolId, Collection, [], [{timeout, ?TIMEOUT}]).
 
-find(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
-	find(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]);
+%find(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
+%	find(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]);
 
-%% this function has been deprecated
-find(PoolId, Collection, Query) when is_record(Query, emo_query) ->
-	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-	Packet = emongo_packet:do_query(Pool#pool.database, Collection, Pool#pool.req_id, Query),
-	emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT).
+%%% this function has been deprecated
+%find(PoolId, Collection, Query) when is_record(Query, emo_query) ->
+%	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+%	Packet = emongo_packet:do_query(Pool#pool.database, Collection, Pool#pool.req_id, Query),
+%	emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT).
 
 %% @spec find(PoolId, Collection, Selector, Options) -> Result
 %%		 PoolId = atom()
