@@ -273,6 +273,8 @@ update_all(PoolId, Collection, Selector, Document) when ?IS_DOCUMENT(Selector), 
 
 %%------------------------------------------------------------------------------
 %% update_sync that runs db.$cmd.findOne({getlasterror: 1});
+%% If no documents match the input Selector, {error, no_match_found} will be
+%% returned.
 %%------------------------------------------------------------------------------
 update_sync(PoolId, Collection, Selector, Document) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
 	update_sync(PoolId, Collection, Selector, Document, false).
@@ -283,7 +285,7 @@ update_sync(PoolId, Collection, Selector, Document, Upsert) when ?IS_DOCUMENT(Se
 update_sync(PoolId, Collection, Selector, Document, Upsert, Options) when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:update(Pool#pool.database, Collection, Pool#pool.req_id, Upsert, false, Selector, Document),
-	sync_command({Pid, Pool}, Packet1, Options).
+	sync_command({Pid, Pool}, Packet1, [check_match_found | Options]).
 
 %%------------------------------------------------------------------------------
 %% update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -312,6 +314,8 @@ delete(PoolId, Collection, Selector) ->
 
 %%------------------------------------------------------------------------------
 %% delete_sync that runs db.$cmd.findOne({getlasterror: 1});
+%% If no documents match the input Selector, {error, no_match_found} will be
+%% returned.
 %%------------------------------------------------------------------------------
 delete_sync(PoolId, Collection) ->
 	delete_sync(PoolId, Collection, []).
@@ -322,7 +326,7 @@ delete_sync(PoolId, Collection, Selector) ->
 delete_sync(PoolId, Collection, Selector, Options) ->
 	{Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
 	Packet1 = emongo_packet:delete(Pool#pool.database, Collection, Pool#pool.req_id, transform_selector(Selector)),
-	sync_command({Pid, Pool}, Packet1, Options).
+	sync_command({Pid, Pool}, Packet1, [check_match_found | Options]).
 
 %%------------------------------------------------------------------------------
 %% ensure index
@@ -696,17 +700,26 @@ sync_command({Pid, Pool}, Packet1, Options) ->
 	Resp = emongo_conn:send_sync(Pid, Pool#pool.req_id, Packet1, Packet2, ?TIMEOUT),
 	case lists:member(response_options, Options) of
 		true  -> Resp;
-		false -> get_sync_result(Resp)
+		false -> get_sync_result(Resp, Options)
 	end.
 
-get_sync_result(#response{documents = [Doc]}) ->
+get_sync_result(#response{documents = [Doc]}, Options) ->
 	case lists:keysearch(<<"err">>, 1, Doc) of
-		{value, {_, undefined}} -> ok;
-		{value, {_, Msg}} -> {error, Msg};
-		_ -> {error, {invalid_error_message, Doc}}
+		{value, {_, undefined}} -> check_match_found(Doc, Options);
+		{value, {_, Msg}}       -> {error, Msg};
+		_                       -> {error, {invalid_error_message, Doc}}
 	end;
-get_sync_result(Resp) ->
-	{error, {invalid_response, Resp}}.
+get_sync_result(Resp, _Options) -> {error, {invalid_response, Resp}}.
+
+check_match_found(Doc, Options) ->
+  case lists:member(check_match_found, Options) of
+    true ->
+      case lists:keyfind(<<"n">>, 1, Doc) of
+        {_, N} when N >= 1 -> ok;
+        _                  -> {error, no_match_found}
+      end;
+    false -> ok
+  end.
 
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
