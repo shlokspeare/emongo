@@ -27,7 +27,7 @@
 		 handle_info/2, terminate/2, code_change/3]).
 
 -export([pools/0, oid/0, oid_generation_time/1, add_pool/5, remove_pool/1,
-         auth/3, find_all/2, find_all/3, find_all/4,
+         auth/3, find/4, find_all/2, find_all/3, find_all/4,
          get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
 		 insert/3, insert_sync/3, insert_sync/4, update/4, update/5,
 		 update_all/4, update_sync/4, update_sync/5, update_sync/6,
@@ -670,6 +670,8 @@ transform_selector([{Key, [{_,_}|_]=Vals}|Tail], Acc) ->
 				{<<"$exists">>, Val};
 			near when is_list(Val) ->
 				{<<"$near">>, {array, Val}};
+      elem_match ->
+        {<<"$elemMatch">>, transform_selector(Val)};
 			_ ->
 				{Operator, Val}
 		 end || {Operator, Val} <- Vals],
