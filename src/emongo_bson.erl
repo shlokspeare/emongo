@@ -39,14 +39,8 @@ encode_key_value(Key, Val) when is_float(Val) ->
 %% STRING
 encode_key_value(Key, Val) when is_binary(Val) orelse Val == [] orelse (is_list(Val) andalso length(Val) > 0 andalso is_integer(hd(Val))) ->
 	Key1 = encode_key(Key),
-	case unicode:characters_to_binary(Val) of
-		{error, Bin, RestData} ->
-			exit({cannot_convert_chars_to_binary, Val, Bin, RestData});
-		{incomplete, Bin1, Bin2} ->
-			exit({cannot_convert_chars_to_binary, Val, Bin1, Bin2});
-		Val1 ->
-			<<2, Key1/binary, 0, (byte_size(Val1)+1):32/little-signed, Val1/binary, 0:8>>
-	end;
+  Val1 = emongo:utf8_encode(Val),
+  <<2, Key1/binary, 0, (byte_size(Val1)+1):32/little-signed, Val1/binary, 0:8>>;
 
 %% NESTED OBJECT
 encode_key_value(Key, [{_,_}|_]=Val) ->
@@ -114,8 +108,8 @@ encode_key_value(Key, undefined) ->
 %% REGEX
 encode_key_value(Key, {regexp, Regexp, Options}) ->
 	Key1 = encode_key(Key),
-	RegexpBin = unicode:characters_to_binary(Regexp),
-	OptionsBin = unicode:characters_to_binary(Options),
+	RegexpBin = emongo:utf8_encode(Regexp),
+	OptionsBin = emongo:utf8_encode(Options),
 	<<11, Key1/binary, 0, RegexpBin/binary, 0, OptionsBin/binary, 0>>;
 
 % INT
@@ -138,7 +132,7 @@ encode_key(Key) when is_atom(Key) ->
 	atom_to_binary(Key, utf8);
 
 encode_key(Key) when is_list(Key) ->
-	unicode:characters_to_binary(Key);
+	emongo:utf8_encode(Key);
 
 encode_key(Key) when is_integer(Key) ->
 	encode_key(integer_to_list(Key)).
