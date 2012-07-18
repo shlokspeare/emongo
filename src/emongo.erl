@@ -34,7 +34,7 @@
 		 update_all_sync/4, update_all_sync/5, delete/2, delete/3,
 		 delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/3, count/2,
 		 count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
-		 hex2dec/1]).
+		 hex2dec/1, utf8_encode/1]).
 
 -include("emongo.hrl").
 
@@ -594,6 +594,19 @@ hex2dec(N,<<A:8,B:8,Rem/binary>>) ->
 hex2dec(N,<<>>) ->
 	N.
 
+utf8_encode(Value) ->
+  try
+    iolist_to_binary(Value)
+  catch _:_ ->
+    case unicode:characters_to_binary(Value) of
+	    {error, Bin, RestData} ->
+		    exit({cannot_convert_chars_to_binary, Value, Bin, RestData});
+	    {incomplete, Bin1, Bin2} ->
+		    exit({cannot_convert_chars_to_binary, Value, Bin1, Bin2});
+	    EncodedValue -> EncodedValue
+    end
+  end.
+
 create_query(Options, Selector) ->
 	Selector1 = transform_selector(Selector),
 	create_query(Options, #emo_query{}, Selector1, []).
@@ -670,8 +683,10 @@ transform_selector([{Key, [{_,_}|_]=Vals}|Tail], Acc) ->
 				{<<"$exists">>, Val};
 			near when is_list(Val) ->
 				{<<"$near">>, {array, Val}};
-      elem_match ->
-        {<<"$elemMatch">>, transform_selector(Val)};
+			% Some other available operators such as $elemMatch, $or, $and, etc. need
+			% recursive transformation.
+			_ when is_list(Val) ->
+				{Operator, transform_selector(Val)};
 			_ ->
 				{Operator, Val}
 		 end || {Operator, Val} <- Vals],
@@ -729,3 +744,5 @@ to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
 
 convert_fields(Fields) ->
   [{Field, 1} || Field <- Fields].
+
+% c("../../deps/emongo/src/emongo.erl", [{i, "../../deps/emongo/include"}]).
