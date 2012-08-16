@@ -205,10 +205,10 @@ decode_value(8, <<1:8, Tail/binary>>) ->
 
 %% DATE
 decode_value(9, <<MSecs:64/little-signed, Tail/binary>>) ->
-	UnixTime = trunc(MSecs / 1000),
-	MegaSecs = trunc(UnixTime / 1000000),
-	Secs = UnixTime - (MegaSecs * 1000000),
-	MicroSecs = (MSecs - (UnixTime * 1000)) * 1000,
+	UnixTime  = MSecs    div 1000,
+	MegaSecs  = UnixTime div 1000000,
+	Secs      = UnixTime rem 1000000,
+	MicroSecs = (MSecs rem 1000) * 1000,
 	{{MegaSecs, Secs, MicroSecs}, Tail};
 
 %% VOID
@@ -218,6 +218,18 @@ decode_value(10, Tail) ->
 %% INT
 decode_value(16, <<Int:32/little-signed, Tail/binary>>) ->
 	{Int, Tail};
+
+%% DATE in Timestamp() format: The first 32 bits are a time_t value (seconds
+%% since the UTC epoch). The second 32 bits are an incrementing ordinal for
+%% operations within a given second.
+decode_value(17, <<UnixTime:32/little-signed, Ordinal:32/little-signed,
+                   Tail/binary>>) ->
+	MegaSecs = UnixTime div 1000000,
+	Secs     = UnixTime rem 1000000,
+  % Though the Ordinal is not microseconds, pretend it is so time stamps are
+  % sorted correctly.
+	MicroSecs = Ordinal,
+	{{MegaSecs, Secs, MicroSecs}, Tail};
 
 %% LONG
 decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
