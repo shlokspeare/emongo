@@ -656,6 +656,9 @@ transform_selector([], Acc) ->
 transform_selector([{where, Val}|Tail], Acc) when is_list(Val) ->
 	transform_selector(Tail, [{<<"$where">>, Val}|Acc]);
 
+transform_selector([{<<"$or">>, [{_,_}|_]=Vals}|Tail], Acc) ->
+  transform_selector(Tail, [{<<"$or">>, transform_selector(Vals)} | Acc]);
+
 transform_selector([{Key, [{_,_}|_]=Vals}|Tail], Acc) ->
 	Vals1 =
 		[case Operator of
