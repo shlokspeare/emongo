@@ -352,8 +352,11 @@ count(PoolId, Collection, Selector, Options) ->
 	Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
 	                                Query),
 	case emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT) of
-		#response{documents=[[{<<"n">>,Count}|_]]} ->
-			round(Count);
+		#response{documents=[Doc]} ->
+		  case proplists:get_value(<<"n">>, Doc, undefined) of
+		    undefined -> undefined;
+		    Count     -> round(Count)
+		  end;
 		_ ->
 			undefined
 	end.
