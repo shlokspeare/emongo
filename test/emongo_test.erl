@@ -2,7 +2,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
--define(NUM_PROCESSES,     500).
+-define(NUM_PROCESSES,     300).
 -define(NUM_TESTS_PER_PID, 10).
 -define(POOL,              pool1).
 -define(COLL,              <<"test">>).
@@ -70,6 +70,13 @@ run_tests(Pid, X, Y) ->
 
     FARes = emongo:find_all(?POOL, ?COLL, [{"_id", Num}]),
     [[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]] = FARes,
+
+    CRes = emongo:count(?POOL, ?COLL),
+    true = is_number(CRes),
+
+    PipeLine = [[{<<"$group">>,  [ { <<"_id">>, "all"},{ <<"count">>, [{ <<"$sum">>, 1}] } ] } ]],
+    ARes = emongo:aggregate(?POOL, ?COLL, PipeLine),
+    [{<<"result">>, {array,[[{<<"_id">>,<<"all">>},{<<"count">>, _ }]]}}, {<<"ok">>,1.0}]  = ARes,
 
     DRes = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
     ok = check_result("delete_sync", DRes, 1)
