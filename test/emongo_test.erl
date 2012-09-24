@@ -13,6 +13,7 @@ setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
   emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
+                  %"jdhood1", "test_password"),
   ok.
 
 cleanup(_) ->
