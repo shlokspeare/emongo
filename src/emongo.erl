@@ -567,7 +567,7 @@ do_open_connections(#pool{id        = PoolId,
     true ->
       case emongo_conn:start_link(PoolId, Host, Port) of
         {error, Reason} ->
-          throw({error, Reason});
+          throw({emongo_error, Reason});
         Pid ->
           do_auth(Pid, Pool, User, PassHash),
           do_open_connections(Pool#pool{conn_pids = queue:in(Pid, Pids)})
@@ -582,7 +582,7 @@ pass_hash(User, Pass) ->
 do_auth(_Pid, _Pool, undefined, undefined) -> ok;
 do_auth(Pid, Pool, User, Hash) ->
   Nonce = case getnonce(Pid, Pool) of
-    error -> throw(getnonce);
+    error -> throw(emongo_getnonce);
     N     -> N
   end,
   Digest = emongo:dec2hex(erlang:md5(binary_to_list(Nonce) ++ User ++ Hash)),
@@ -597,9 +597,9 @@ do_auth(Pid, Pool, User, Hash) ->
     _ ->
       case lists:keyfind(<<"errmsg">>, 1, Res) of
         {<<"errmsg">>, Error} ->
-          throw({authentication_failed, Error});
+          throw({emongo_authentication_failed, Error});
         _ ->
-          throw({authentication_failed, <<"Unknown error">>})
+          throw({emongo_authentication_failed, <<"Unknown error">>})
       end
   end.
 
@@ -651,9 +651,9 @@ utf8_encode(Value) ->
   catch _:_ ->
   case unicode:characters_to_binary(Value) of
     {error, Bin, RestData} ->
-      exit({cannot_convert_chars_to_binary, Value, Bin, RestData});
+      exit({emongo_cannot_convert_chars_to_binary, Value, Bin, RestData});
     {incomplete, Bin1, Bin2} ->
-      exit({cannot_convert_chars_to_binary, Value, Bin1, Bin2});
+      exit({emongo_cannot_convert_chars_to_binary, Value, Bin1, Bin2});
     EncodedValue -> EncodedValue
   end
   end.

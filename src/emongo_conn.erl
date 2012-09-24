@@ -40,7 +40,7 @@ init(PoolId, Host, Port, Parent) ->
 send(Pid, ReqID, Packet) ->
 	case gen:call(Pid, '$emongo_conn_send', {ReqID, Packet}) of
 		{ok, Result} -> Result;
-		{error, Reason} -> exit(Reason)
+		{error, Reason} -> exit({emongo, Reason})
 	end.
 
 send_sync(Pid, ReqID, Packet1, Packet2, Timeout) ->
@@ -52,7 +52,7 @@ send_sync(Pid, ReqID, Packet1, Packet2, Timeout) ->
 		exit:timeout->
 			%Clear the state from the timed out call
 			gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
-			exit(timeout)
+			exit(emongo_timeout)
 	end.
 
 send_recv(Pid, ReqID, Packet, Timeout) ->
@@ -64,7 +64,7 @@ send_recv(Pid, ReqID, Packet, Timeout) ->
 		exit:timeout->
 			%Clear the state from the timed out call
 			gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
-			exit(timeout)
+			exit(emongo_timeout)
 	end.
 
 loop(State, Leftover) ->
@@ -112,9 +112,9 @@ loop(State, Leftover) ->
 				{_NewState, _NewLeftover} =
 					process_bin(State, <<Leftover/binary, Data/binary>>);
 			{tcp_closed, Socket} ->
-				exit(tcp_closed);
+				exit(emongo_tcp_closed);
 			{tcp_error, Socket, Reason} ->
-				exit(Reason)
+				exit({emongo, Reason})
 		end
 	catch _:Error ->
 		% The exit message has to include the pool_id and follow a format the emongo
@@ -128,7 +128,7 @@ open_socket(Host, Port) ->
 		{ok, Sock} ->
 			Sock;
 		{error, Reason} ->
-			exit({failed_to_open_socket, Reason})
+			exit({emongo_failed_to_open_socket, Reason})
 	end.
 
 process_bin(State, <<>>) ->
