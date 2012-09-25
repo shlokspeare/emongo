@@ -33,6 +33,7 @@
          update_all/4, update_sync/4, update_sync/5, update_sync/6,
          update_all_sync/4, update_all_sync/5, delete/2, delete/3,
          delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/3, count/2,
+         aggregate/3, aggregate/4,
          count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
          hex2dec/1, utf8_encode/1]).
 
@@ -337,22 +338,41 @@ count(PoolId, Collection, Selector) ->
 count(PoolId, Collection, Selector, Options) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Query = create_query([{<<"count">>, Collection}, {limit, 1} | Options],
-             Selector),
+                       Selector),
   Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
-                  Query),
+                                Query),
   case emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT) of
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"n">>, Doc, undefined) of
-      undefined -> undefined;
-      Count   -> round(Count)
+        undefined -> undefined;
+        Count     -> round(Count)
       end;
     _ ->
       undefined
   end.
 
-%------------------------------------------------------------------------------
-% find_and_modify
-%------------------------------------------------------------------------------
+%%------------------------------------------------------------------------------
+%% aggregate
+%%------------------------------------------------------------------------------
+aggregate(PoolId, Collection, Pipeline) ->
+  aggregate(PoolId, Collection, Pipeline, []).
+
+aggregate(PoolId, Collection, Pipeline, Options) ->
+  {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+  Query = create_query([{<<"pipeline">>, {array, Pipeline } },{<<"aggregate">>, Collection},{limit,1} | Options], []),
+  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  case emongo_conn:send_recv(Pid, Pool#pool.req_id, Packet, ?TIMEOUT) of
+    #response{documents=[Doc]} ->
+      case proplists:get_value(<<"ok">>, Doc, undefined) of
+        undefined -> undefined;
+        _     -> Doc
+      end;
+      _ -> undefined
+  end.
+
+%%------------------------------------------------------------------------------
+%% find_and_modify
+%%------------------------------------------------------------------------------
 find_and_modify(PoolId, Collection, Selector, Update) ->
   find_and_modify(PoolId, Collection, Selector, Update, []).
 
@@ -567,7 +587,7 @@ do_open_connections(#pool{id        = PoolId,
     true ->
       case emongo_conn:start_link(PoolId, Host, Port) of
         {error, Reason} ->
-          throw({error, Reason});
+          throw({emongo_error, Reason});
         Pid ->
           do_auth(Pid, Pool, User, PassHash),
           do_open_connections(Pool#pool{conn_pids = queue:in(Pid, Pids)})
@@ -582,7 +602,7 @@ pass_hash(User, Pass) ->
 do_auth(_Pid, _Pool, undefined, undefined) -> ok;
 do_auth(Pid, Pool, User, Hash) ->
   Nonce = case getnonce(Pid, Pool) of
-    error -> throw(getnonce);
+    error -> throw(emongo_getnonce);
     N     -> N
   end,
   Digest = emongo:dec2hex(erlang:md5(binary_to_list(Nonce) ++ User ++ Hash)),
@@ -597,9 +617,9 @@ do_auth(Pid, Pool, User, Hash) ->
     _ ->
       case lists:keyfind(<<"errmsg">>, 1, Res) of
         {<<"errmsg">>, Error} ->
-          throw({authentication_failed, Error});
+          throw({emongo_authentication_failed, Error});
         _ ->
-          throw({authentication_failed, <<"Unknown error">>})
+          throw({emongo_authentication_failed, <<"Unknown error">>})
       end
   end.
 
@@ -651,9 +671,9 @@ utf8_encode(Value) ->
   catch _:_ ->
   case unicode:characters_to_binary(Value) of
     {error, Bin, RestData} ->
-      exit({cannot_convert_chars_to_binary, Value, Bin, RestData});
+      exit({emongo_cannot_convert_chars_to_binary, Value, Bin, RestData});
     {incomplete, Bin1, Bin2} ->
-      exit({cannot_convert_chars_to_binary, Value, Bin1, Bin2});
+      exit({emongo_cannot_convert_chars_to_binary, Value, Bin1, Bin2});
     EncodedValue -> EncodedValue
   end
   end.
