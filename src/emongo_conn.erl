@@ -38,33 +38,28 @@ init(PoolId, Host, Port, Parent) ->
 	loop(#state{pool_id=PoolId, socket=Socket, requests=[]}, <<>>).
 
 send(Pid, ReqID, Packet) ->
-	case gen:call(Pid, '$emongo_conn_send', {ReqID, Packet}) of
-		{ok, Result} -> Result;
-		{error, Reason} -> exit({emongo, Reason})
-	end.
+  gen_call(Pid, '$emongo_conn_send', ReqID, {ReqID, Packet}, ?TIMEOUT).
 
 send_sync(Pid, ReqID, Packet1, Packet2, Timeout) ->
-	try
-		{ok, Resp} = gen:call(Pid, '$emongo_conn_send_sync', {ReqID, Packet1, Packet2}, Timeout),
-		Documents = emongo_bson:decode(Resp#response.documents),
-		Resp#response{documents=Documents}
-	catch
-		exit:timeout->
-			%Clear the state from the timed out call
-			gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
-			exit(emongo_timeout)
-	end.
+  Resp = gen_call(Pid, '$emongo_conn_send_sync', ReqID,
+                  {ReqID, Packet1, Packet2}, Timeout),
+	Documents = emongo_bson:decode(Resp#response.documents),
+	Resp#response{documents=Documents}.
 
 send_recv(Pid, ReqID, Packet, Timeout) ->
-	try
-		{ok, Resp} = gen:call(Pid, '$emongo_conn_send_recv', {ReqID, Packet}, Timeout),
-		Documents = emongo_bson:decode(Resp#response.documents),
-		Resp#response{documents=Documents}
-	catch
-		exit:timeout->
-			%Clear the state from the timed out call
-			gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
-			exit(emongo_timeout)
+	Resp = gen_call(Pid, '$emongo_conn_send_recv', ReqID, {ReqID, Packet},
+	                Timeout),
+	Documents = emongo_bson:decode(Resp#response.documents),
+	Resp#response{documents=Documents}.
+
+gen_call(Pid, Label, ReqID, Request, Timeout) ->
+	case catch gen:call(Pid, Label, Request, Timeout) of
+		{ok, Result} -> Result;
+		{'EXIT', timeout} ->
+			% Clear the state from the timed out call
+      gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
+		  exit(emongo_timeout);
+		Error -> exit({emongo_error, Error})
 	end.
 
 loop(State, Leftover) ->
