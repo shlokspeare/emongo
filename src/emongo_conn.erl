@@ -58,8 +58,8 @@ gen_call(Pid, Label, ReqID, Request, Timeout) ->
 		{'EXIT', timeout} ->
 			% Clear the state from the timed out call
       gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
-		  exit(emongo_timeout);
-		Error -> exit({emongo_error, Error})
+		  exit({emongo_conn_error, timeout});
+		Error -> exit({emongo_conn_error, Error})
 	end.
 
 loop(State, Leftover) ->
