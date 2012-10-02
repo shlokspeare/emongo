@@ -22,7 +22,7 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
 
--export([start_link/3, init/4, send/3, send_sync/5, send_recv/4]).
+-export([start_link/3, init/4, stop/1, send/3, send_sync/5, send_recv/4]).
 
 -record(request, {req_id, requestor}).
 -record(state, {pool_id, socket, requests}).
@@ -36,6 +36,9 @@ init(PoolId, Host, Port, Parent) ->
 	Socket = open_socket(Host, Port),
 	proc_lib:init_ack(Parent, self()),
 	loop(#state{pool_id=PoolId, socket=Socket, requests=[]}, <<>>).
+
+stop(Pid) ->
+  Pid ! '$emongo_conn_close'.
 
 send(Pid, ReqID, Packet) ->
   gen_call(Pid, '$emongo_conn_send', ReqID, {ReqID, Packet}, ?TIMEOUT).
@@ -106,6 +109,8 @@ loop(State, Leftover) ->
 			{tcp, Socket, Data} ->
 				{_NewState, _NewLeftover} =
 					process_bin(State, <<Leftover/binary, Data/binary>>);
+      '$emongo_conn_close' ->
+        exit(emongo_conn_closed);
 			{tcp_closed, Socket} ->
 				exit(emongo_tcp_closed);
 			{tcp_error, Socket, Reason} ->
