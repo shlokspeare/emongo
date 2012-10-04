@@ -474,20 +474,14 @@ handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash},
 
 handle_call({remove_pool, PoolId}, _From, #state{pools=Pools}=State) ->
   {Result, Pools1} =
-    case proplists:is_defined(PoolId, Pools) of
-      true ->
-
-
-
-
-        % TODO: Close connections
-
-
-
-
-        {ok, lists:keydelete(PoolId, 1, Pools)};
-      false ->
-        {not_found, Pools}
+    case proplists:get_value(PoolId, Pools) of
+      undefined ->
+        {not_found, Pools};
+      #pool{conn_pids = ConnPids} ->
+        lists:foreach(fun(Pid) ->
+          emongo_conn:stop(Pid)
+        end, queue:to_list(ConnPids)),
+        {ok, lists:keydelete(PoolId, 1, Pools)}
     end,
   {reply, Result, State#state{pools=Pools1}};
 
