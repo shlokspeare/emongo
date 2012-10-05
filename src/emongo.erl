@@ -510,6 +510,8 @@ handle_cast(_Msg, State) ->
 %                     {stop, Reason, State}
 % Description: Handling all non call/cast messages
 %--------------------------------------------------------------------
+%handle_info({'EXIT', Pid, ok}, State) ->
+%  {noreply, State};
 handle_info({'EXIT', Pid, {emongo_conn, PoolId, Error}},
             #state{pools=Pools}=State) ->
   io:format("EXIT ~p, {emongo_conn, ~p, ~p} in ~p~n",
