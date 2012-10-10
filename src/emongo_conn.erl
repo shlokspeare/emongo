@@ -66,9 +66,9 @@ gen_call(Pid, Label, ReqID, Request, Timeout) ->
 	end.
 
 loop(State, Leftover) ->
-	{NewState, NewLeftover} = try
+	try
 		Socket = State#state.socket,
-		receive
+		{NewState, NewLeftover} = receive
 			{'$emongo_conn_send', {From, Mref}, {_ReqID, Packet}} ->
 				gen_tcp:send(Socket, Packet),
 				gen:reply({From, Mref}, ok),
@@ -115,13 +115,16 @@ loop(State, Leftover) ->
 				exit(emongo_tcp_closed);
 			{tcp_error, Socket, Reason} ->
 				exit({emongo, Reason})
-		end
-	catch _:Error ->
-		% The exit message has to include the pool_id and follow a format the emongo
-		% module expects so this process can be restarted.
-		exit({?MODULE, State#state.pool_id, Error})
-	end,
-	loop(NewState, NewLeftover).
+		end,
+		loop(NewState, NewLeftover)
+	catch
+	  _:emongo_conn_closed ->
+	    ok;
+	  _:Error ->
+		  % The exit message has to include the pool_id and follow a format the
+		  % emongo module expects so this process can be restarted.
+		  exit({?MODULE, State#state.pool_id, Error})
+	end.
 
 open_socket(Host, Port) ->
 	case gen_tcp:connect(Host, Port, [binary, {active, true}]) of
