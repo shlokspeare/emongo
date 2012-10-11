@@ -32,7 +32,7 @@
          insert/3, insert_sync/3, insert_sync/4, update/4, update/5,
          update_all/4, update_sync/4, update_sync/5, update_sync/6,
          update_all_sync/4, update_all_sync/5, delete/2, delete/3,
-         delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/3, count/2,
+         delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/4, count/2,
          aggregate/3, aggregate/4,
          count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
          hex2dec/1, utf8_encode/1]).
@@ -319,10 +319,10 @@ delete_sync(PoolId, Collection, Selector, Options) ->
 %------------------------------------------------------------------------------
 % ensure index
 %------------------------------------------------------------------------------
-ensure_index(PoolId, Collection, Keys) when ?IS_DOCUMENT(Keys)->
+ensure_index(PoolId, Collection, Keys, Unique) when ?IS_DOCUMENT(Keys)->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Packet = emongo_packet:ensure_index(Pool#pool.database, Collection,
-                                      Pool#pool.req_id, Keys),
+                                      Pool#pool.req_id, Keys, Unique),
   send_command(ensure_index, Collection, Keys, undefined, Pid, Pool#pool.req_id,
                Packet).
 
