@@ -24,7 +24,7 @@
 
 -export([update/7, insert/4, do_query/4, get_more/5,
 		 delete/4, kill_cursors/2, msg/2, decode_response/1,
-		 ensure_index/4]).
+		 ensure_index/5]).
 
 -include("emongo.hrl").
 
@@ -78,12 +78,13 @@ delete(Database, Collection, ReqID, Selector) ->
 	Length = byte_size(Message),
     <<(Length+16):32/little-signed, ReqID:32/little-signed, 0:32, ?OP_DELETE:32/little-signed, Message/binary>>.
 
-ensure_index(Database, Collection, ReqID, Keys) ->
+ensure_index(Database, Collection, ReqID, Keys, Unique) ->
 	FullName = emongo:utf8_encode([Database, ".system.indexes"]),
 	Selector = [
 		{<<"name">>, index_name(Keys, <<>>)},
 		{<<"ns">>, emongo:utf8_encode([Database, ".", Collection])},
-		{<<"key">>, Keys}],
+		{<<"key">>, Keys},
+		{<<"unique">>, Unique}],
 	EncodedDocument = emongo_bson:encode(Selector),
 	Message = <<0:32, FullName/binary, 0, EncodedDocument/binary>>,
 	Length = byte_size(Message),
