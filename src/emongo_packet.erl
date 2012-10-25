@@ -48,7 +48,7 @@ insert(Database, Collection, ReqID, Documents) ->
     <<(Length+16):32/little-signed, ReqID:32/little-signed, 0:32, ?OP_INSERT:32/little-signed, Message/binary>>.
 
 do_query(Database, Collection, ReqID, Query) when is_record(Query, emo_query) ->
-	OptsSum = lists:foldl(fun(X, Acc) -> Acc+X end, 0, Query#emo_query.opts),
+	OptsSum = lists:foldl(fun(X, Acc) -> Acc bor X end, 0, Query#emo_query.opts),
 	FullName = emongo:utf8_encode([Database, ".", Collection]),
 	EncodedDocument = if
 		is_binary(Query#emo_query.q) -> Query#emo_query.q;
