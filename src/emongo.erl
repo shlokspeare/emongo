@@ -106,9 +106,10 @@ remove_pool(PoolId) ->
 %     response_options = return {response, header, response_flag, cursor_id,
 %                                offset, limit, documents}
 %     Result = documents() | response()
-find(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
-                                                 is_list(Options) ->
+find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
+                                                   is_list(OptionsIn) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+  Options = set_slave_ok(OptionsIn),
   Query = create_query(Options, Selector),
   Packet = emongo_packet:do_query(Pool#pool.database, Collection,
                                   Pool#pool.req_id, Query),
@@ -335,7 +336,8 @@ count(PoolId, Collection) ->
 count(PoolId, Collection, Selector) ->
   count(PoolId, Collection, Selector, []).
 
-count(PoolId, Collection, Selector, Options) ->
+count(PoolId, Collection, Selector, OptionsIn) ->
+  Options = set_slave_ok(OptionsIn),
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Query = create_query([{<<"count">>, Collection}, {limit, 1} | Options],
                        Selector),
@@ -358,7 +360,8 @@ count(PoolId, Collection, Selector, Options) ->
 aggregate(PoolId, Collection, Pipeline) ->
   aggregate(PoolId, Collection, Pipeline, []).
 
-aggregate(PoolId, Collection, Pipeline, Options) ->
+aggregate(PoolId, Collection, Pipeline, OptionsIn) ->
+  Options = set_slave_ok(OptionsIn),
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Query = create_query([{<<"pipeline">>, {array, Pipeline } },{<<"aggregate">>, Collection},{limit,1} | Options], []),
   Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
@@ -840,5 +843,11 @@ to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
 
 convert_fields(Fields) ->
   [{Field, 1} || Field <- Fields].
+
+set_slave_ok(OptionsIn) ->
+  case lists:member(?USE_PRIMARY, OptionsIn) of
+    true -> OptionsIn;
+    _    -> [?SLAVE_OK | OptionsIn]
+  end.
 
 % c("../../deps/emongo/src/emongo.erl", [{i, "../../deps/emongo/include"}]).
