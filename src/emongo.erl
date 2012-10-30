@@ -682,97 +682,104 @@ utf8_encode(Value) ->
   end
   end.
 
-create_query(Options, Selector) ->
-  Selector1 = transform_selector(Selector),
-  create_query(Options, #emo_query{}, Selector1, []).
+create_query(Options, SelectorIn) ->
+  Selector = transform_selector(SelectorIn),
+  EmoQuery = transform_options(Options, #emo_query{}),
+  finalize_emo_query(Selector, EmoQuery).
 
-create_query([], QueryRec, QueryDoc, []) ->
-  QueryRec#emo_query{q=QueryDoc};
+finalize_emo_query(Selector, #emo_query{q = []} = EmoQuery) ->
+  EmoQuery#emo_query{q = Selector};
+finalize_emo_query([], EmoQuery) ->
+  EmoQuery;
+finalize_emo_query(Selector, #emo_query{q = Q} = EmoQuery) ->
+  EmoQuery#emo_query{q = Q ++ [{<<"query">>, Selector}]}.
 
-create_query([], QueryRec, [], OptDoc) ->
-  QueryRec#emo_query{q=OptDoc};
-
-create_query([], QueryRec, QueryDoc, OptDoc) ->
-  QueryRec#emo_query{q=(OptDoc ++ [{<<"query">>, QueryDoc}])};
-
-create_query([{limit, Limit}|Options], QueryRec, QueryDoc, OptDoc) ->
-  QueryRec1 = QueryRec#emo_query{limit=Limit},
-  create_query(Options, QueryRec1, QueryDoc, OptDoc);
-
-create_query([{offset, Offset}|Options], QueryRec, QueryDoc, OptDoc) ->
-  QueryRec1 = QueryRec#emo_query{offset=Offset},
-  create_query(Options, QueryRec1, QueryDoc, OptDoc);
-
-create_query([{orderby, Orderby}|Options], QueryRec, QueryDoc, OptDoc) ->
-  Orderby1 = [{Key, case Dir of desc -> -1; _ -> 1 end} ||
-              {Key, Dir} <- Orderby],
-  OptDoc1 = [{<<"orderby">>, Orderby1}|OptDoc],
-  create_query(Options, QueryRec, QueryDoc, OptDoc1);
-
-create_query([{fields, Fields}|Options], QueryRec, QueryDoc, OptDoc) ->
-  QueryRec1 = QueryRec#emo_query{field_selector=convert_fields(Fields)},
-  create_query(Options, QueryRec1, QueryDoc, OptDoc);
-
-create_query([Opt|Options], QueryRec, QueryDoc, OptDoc) when is_integer(Opt) ->
-  QueryRec1 = QueryRec#emo_query{opts=[Opt|QueryRec#emo_query.opts]},
-  create_query(Options, QueryRec1, QueryDoc, OptDoc);
-
-create_query([{<<_/binary>>, _} = NV | Options], QueryRec, QueryDoc, OptDoc) ->
-  create_query(Options, QueryRec, QueryDoc, [NV | OptDoc]);
-
-create_query([_|Options], QueryRec, QueryDoc, OptDoc) ->
-  create_query(Options, QueryRec, QueryDoc, OptDoc).
+transform_options([], EmoQuery) -> EmoQuery;
+transform_options([{limit, Limit} | Rest], EmoQuery) ->
+  NewEmoQuery = EmoQuery#emo_query{limit=Limit},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{offset, Offset} | Rest], EmoQuery) ->
+  NewEmoQuery = EmoQuery#emo_query{offset=Offset},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{orderby, OrderbyIn} | Rest],
+                  #emo_query{q = Query} = EmoQuery) ->
+  Orderby = {<<"orderby">>, [{Key, case Dir of desc -> -1; _ -> 1 end} ||
+                             {Key, Dir} <- OrderbyIn]},
+  NewEmoQuery = EmoQuery#emo_query{q = [Orderby | Query]},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{fields, Fields} | Rest], EmoQuery) ->
+  NewEmoQuery = EmoQuery#emo_query{field_selector=convert_fields(Fields)},
+  transform_options(Rest, NewEmoQuery);
+transform_options([Opt | Rest], #emo_query{opts = OptsIn} = EmoQuery)
+    when is_integer(Opt) ->
+  NewEmoQuery = EmoQuery#emo_query{opts = Opt bor OptsIn},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{<<_/binary>>, _} = Option | Rest],
+                  #emo_query{q = Query} = EmoQuery) ->
+  NewEmoQuery = EmoQuery#emo_query{q = [Option | Query]},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout ->
+  transform_options(Rest, EmoQuery);
+transform_options([Ignore | Rest], EmoQuery) when Ignore == check_match_found;
+                                                  Ignore == response_options;
+                                                  Ignore == use_primary ->
+  transform_options(Rest, EmoQuery);
+transform_options([Invalid | _Rest], _EmoQuery) ->
+  throw({emongo_invalid_option, Invalid}).
 
 transform_selector(Selector) ->
-  transform_selector(Selector, []).
+  Res = lists:map(fun({Key, Value}) ->
+    ConvKey = convert_key(Key),
+    ForceDataType = force_data_type(ConvKey),
+    ConvValue = convert_value(ForceDataType, Value),
+    {ConvKey, ConvValue}
+  end, Selector),
+  %io:format("Res = ~p\n", [Res]),
+  Res.
 
-transform_selector([], Acc) ->
-  lists:reverse(Acc);
+convert_key(Bin)  when is_binary(Bin) -> Bin;
+convert_key(List) when is_list(List)  -> List;
+convert_key(oid)       -> oid;
+convert_key('>')       -> <<"$gt">>;
+convert_key(gt)        -> <<"$gt">>;
+convert_key('>=')      -> <<"$gte">>;
+convert_key(gte)       -> <<"$gte">>;
+convert_key('<')       -> <<"$lt">>;
+convert_key(lt)        -> <<"$lt">>;
+convert_key('=<')      -> <<"$lte">>;
+convert_key(lte)       -> <<"$lte">>;
+convert_key('=/=')     -> <<"$ne">>;
+convert_key('/=')      -> <<"$ne">>;
+convert_key(ne)        -> <<"$ne">>;
+convert_key(in)        -> <<"$in">>;
+convert_key(nin)       -> <<"$nin">>;
+convert_key(mod)       -> <<"$mod">>;
+convert_key(all)       -> <<"$all">>;
+convert_key(size)      -> <<"$size">>;
+convert_key(exists)    -> <<"$exists">>;
+convert_key(near)      -> <<"$near">>;
+convert_key(where)     -> <<"$where">>;
+convert_key(elemMatch) -> <<"$elemMatch">>.
 
-transform_selector([{where, Val}|Tail], Acc) when is_list(Val) ->
-  transform_selector(Tail, [{<<"$where">>, Val}|Acc]);
+force_data_type(<<"$in">>)  -> array;
+force_data_type(<<"$nin">>) -> array;
+force_data_type(<<"$mod">>) -> array;
+force_data_type(<<"$all">>) -> array;
+force_data_type(<<"$or">>)  -> array;
+force_data_type(<<"$and">>) -> array;
+force_data_type(_)          -> undefined.
 
-transform_selector([{<<"$or">>, [{_,_}|_]=Vals}|Tail], Acc) ->
-  transform_selector(Tail, [{<<"$or">>, transform_selector(Vals)} | Acc]);
-
-transform_selector([{Key, [{_,_}|_]=Vals}|Tail], Acc) ->
-  Vals1 =
-    [case Operator of
-      O when O == '>'; O == gt ->
-        {<<"$gt">>, Val};
-      O when O == '<'; O == lt ->
-        {<<"$lt">>, Val};
-      O when O == '>='; O == gte ->
-        {<<"$gte">>, Val};
-      O when O == '=<'; O == lte ->
-        {<<"$lte">>, Val};
-      O when O == '=/='; O == '/='; O == ne ->
-        {<<"$ne">>, Val};
-      in when is_list(Val) ->
-        {<<"$in">>, {array, Val}};
-      nin when is_list(Val) ->
-        {<<"$nin">>, {array, Val}};
-      mod when is_list(Val), length(Val) == 2 ->
-        {<<"$mod">>, {array, Val}};
-      all when is_list(Val) ->
-        {<<"$all">>, {array, Val}};
-      size when is_integer(Val) ->
-        {<<"$size">>, Val};
-      exists when is_boolean(Val) ->
-        {<<"$exists">>, Val};
-      near when is_list(Val) ->
-        {<<"$near">>, {array, Val}};
-      % Some other available operators such as $elemMatch, $or, $and, etc. need
-      % recursive transformation.
-      _ when is_list(Val) ->
-        {Operator, transform_selector(Val)};
-      _ ->
-        {Operator, Val}
-     end || {Operator, Val} <- Vals],
-  transform_selector(Tail, [{Key, Vals1}|Acc]);
-
-transform_selector([Other|Tail], Acc) ->
-  transform_selector(Tail, [Other|Acc]).
+convert_value(array, {array, Vals}) ->
+  {array, [convert_value(undefined, V) || V <- Vals]};
+convert_value(array, Vals) ->
+  convert_value(array, {array, Vals});
+convert_value(_, Sel) when ?IS_DOCUMENT(Sel) ->
+  transform_selector(Sel);
+convert_value(_, [SubSel | _] = SubSels) when ?IS_DOCUMENT(SubSel) ->
+  {array, [transform_selector(Sel) || Sel <- SubSels]};
+convert_value(_, {array, [SubSel | _] = SubSels}) when ?IS_DOCUMENT(SubSel) ->
+  {array, [transform_selector(Sel) || Sel <- SubSels]};
+convert_value(_, Value) -> Value.
 
 dec0($a) ->  10;
 dec0($b) ->  11;
