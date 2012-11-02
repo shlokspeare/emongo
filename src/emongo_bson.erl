@@ -237,3 +237,5 @@ decode_value(18, <<Int:64/little-signed, Tail/binary>>) ->
 
 decode_value(Type, Value) ->
 	exit({emongo_bson_decode_error, Type, Value}).
+
+% c("../../deps/emongo/src/emongo_bson.erl", [{i, "../../deps/emongo/include"}]).
