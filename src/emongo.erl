@@ -246,7 +246,7 @@ update_all(PoolId, Collection, Selector, Document)
 
 %------------------------------------------------------------------------------
 % update_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, {error, no_match_found} will be
+% If no documents match the input Selector, emongo_no_match_found will be
 % returned.
 %------------------------------------------------------------------------------
 update_sync(PoolId, Collection, Selector, Document)
@@ -300,7 +300,7 @@ delete(PoolId, Collection, Selector) ->
 
 %------------------------------------------------------------------------------
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, {error, no_match_found} will be
+% If no documents match the input Selector, emongo_no_match_found will be
 % returned.
 %------------------------------------------------------------------------------
 delete_sync(PoolId, Collection) ->
@@ -828,18 +828,22 @@ send_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet) ->
 
 get_sync_result(#response{documents = [Doc]}, Options) ->
   case lists:keysearch(<<"err">>, 1, Doc) of
-    {value, {_, undefined}} -> check_match_found(Doc, Options);
-    {value, {_, Msg}}     -> {error, Msg};
-    _             -> {error, {invalid_error_message, Doc}}
+    {value, {_, undefined}} ->
+      check_match_found(Doc, Options);
+    {value, {_, Msg}} ->
+      throw({emongo_error, Msg});
+    _ ->
+      throw({emongo_error, {invalid_error_message, Doc}})
   end;
-get_sync_result(Resp, _Options) -> {error, {invalid_response, Resp}}.
+get_sync_result(Resp, _Options) ->
+  throw({emongo_error, {invalid_response, Resp}}).
 
 check_match_found(Doc, Options) ->
   case lists:member(check_match_found, Options) of
   true ->
     case lists:keyfind(<<"n">>, 1, Doc) of
     {_, N} when N >= 1 -> ok;
-    _          -> {error, no_match_found}
+    _                  -> emongo_no_match_found
     end;
   false -> ok
   end.
