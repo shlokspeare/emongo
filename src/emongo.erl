@@ -839,13 +839,14 @@ get_sync_result(Resp, _Options) ->
   throw({emongo_error, {invalid_response, Resp}}).
 
 check_match_found(Doc, Options) ->
-  case lists:member(check_match_found, Options) of
-  true ->
+  CheckMatchFound = lists:member(check_match_found, Options),
+  if CheckMatchFound ->
     case lists:keyfind(<<"n">>, 1, Doc) of
-    {_, N} when N >= 1 -> ok;
-    _                  -> emongo_no_match_found
+      {_, 0} -> emongo_no_match_found;
+      {_, _} -> ok;
+      false  -> throw({emongo_error, {invalid_response, Doc}})
     end;
-  false -> ok
+  true -> ok
   end.
 
 to_binary(V) when is_binary(V) -> V;
