@@ -2,18 +2,18 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
--define(NUM_PROCESSES,     300).
--define(NUM_TESTS_PER_PID, 10).
+-define(NUM_PROCESSES,     100).
+-define(NUM_TESTS_PER_PID, 1000).
 -define(POOL,              pool1).
 -define(COLL,              <<"test">>).
--define(TIMEOUT,           5000).
+-define(TIMEOUT,           60000).
 -define(OUT(F, D),         ?debugFmt(F, D)).
 
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
   emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
-                  %"jdhood1", "test_password"),
+                  %"test_username", "test_password"),
   ok.
 
 cleanup(_) ->
@@ -24,7 +24,7 @@ run_test_() ->
     fun setup/0,
     fun cleanup/1,
     [
-      fun test_performance/0
+      {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
 
@@ -63,21 +63,14 @@ run_tests(Pid, X, Y) ->
     [FMRes] = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"fm">>, Num}]}], [{new, true}]),
     FMVal = proplists:get_value(<<"value">>, FMRes),
-    [{<<"_id">>, Num}, {<<"fm">>, Num}] = FMVal,
+    ?assertEqual([{<<"_id">>, Num}, {<<"fm">>, Num}], FMVal),
 
     URes = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
       [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
     ok = check_result("update_sync", URes, 1),
 
     FARes = emongo:find_all(?POOL, ?COLL, [{"_id", Num}]),
-    [[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]] = FARes,
-
-    CRes = emongo:count(?POOL, ?COLL),
-    true = is_number(CRes),
-
-    PipeLine = [[{<<"$group">>,  [ { <<"_id">>, "all"},{ <<"count">>, [{ <<"$sum">>, 1}] } ] } ]],
-    ARes = emongo:aggregate(?POOL, ?COLL, PipeLine),
-    [{<<"result">>, {array,[[{<<"_id">>,<<"all">>},{<<"count">>, _ }]]}}, {<<"ok">>,1.0}]  = ARes,
+    ?assertEqual([[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]], FARes),
 
     DRes = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
     ok = check_result("delete_sync", DRes, 1)
