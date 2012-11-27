@@ -246,8 +246,8 @@ update_all(PoolId, Collection, Selector, Document)
 
 %------------------------------------------------------------------------------
 % update_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, emongo_no_match_found will be
-% returned.
+% If no documents match the input Selector, {emongo_no_match_found, DbResponse}
+% will be returned.
 %------------------------------------------------------------------------------
 update_sync(PoolId, Collection, Selector, Document)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
@@ -300,8 +300,8 @@ delete(PoolId, Collection, Selector) ->
 
 %------------------------------------------------------------------------------
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, emongo_no_match_found will be
-% returned.
+% If no documents match the input Selector, {emongo_no_match_found, DbResponse}
+% will be returned.
 %------------------------------------------------------------------------------
 delete_sync(PoolId, Collection) ->
   delete_sync(PoolId, Collection, []).
@@ -842,7 +842,7 @@ check_match_found(Doc, Options) ->
   CheckMatchFound = lists:member(check_match_found, Options),
   if CheckMatchFound ->
     case lists:keyfind(<<"n">>, 1, Doc) of
-      {_, 0} -> emongo_no_match_found;
+      {_, 0} -> {emongo_no_match_found, Doc};
       {_, _} -> ok;
       false  -> throw({emongo_error, {invalid_response, Doc}})
     end;
