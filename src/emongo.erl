@@ -722,7 +722,7 @@ transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout ->
   transform_options(Rest, EmoQuery);
 transform_options([Ignore | Rest], EmoQuery) when Ignore == check_match_found;
                                                   Ignore == response_options;
-                                                  Ignore == use_primary ->
+                                                  Ignore == ?USE_PRIMARY ->
   transform_options(Rest, EmoQuery);
 transform_options([Invalid | _Rest], _EmoQuery) ->
   throw({emongo_invalid_option, Invalid}).
