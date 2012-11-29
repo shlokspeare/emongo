@@ -808,7 +808,7 @@ sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
   end,
   case lists:member(response_options, Options) of
     true  -> Resp;
-    false -> get_sync_result(Resp, Options)
+    false -> get_sync_result(Resp, lists:member(check_match_found, Options))
   end.
 
 send_recv_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet,
@@ -826,27 +826,21 @@ send_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet) ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
   end.
 
-get_sync_result(#response{documents = [Doc]}, Options) ->
-  case lists:keysearch(<<"err">>, 1, Doc) of
-    {value, {_, undefined}} ->
-      check_match_found(Doc, Options);
-    {value, {_, Msg}} ->
-      throw({emongo_error, Msg});
-    _ ->
-      throw({emongo_error, {invalid_error_message, Doc}})
+get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
+  case lists:keyfind(<<"err">>, 1, Doc) of
+    {_, undefined} -> check_match_found(Doc, CheckMatchFound);
+    {_, Msg}       -> throw({emongo_error, Msg});
+    _              -> throw({emongo_error, {invalid_error_message, Doc}})
   end;
-get_sync_result(Resp, _Options) ->
+get_sync_result(Resp, _CheckMatchFound) ->
   throw({emongo_error, {invalid_response, Resp}}).
 
-check_match_found(Doc, Options) ->
-  CheckMatchFound = lists:member(check_match_found, Options),
-  if CheckMatchFound ->
-    case lists:keyfind(<<"n">>, 1, Doc) of
-      {_, 0} -> {emongo_no_match_found, Doc};
-      {_, _} -> ok;
-      false  -> throw({emongo_error, {invalid_response, Doc}})
-    end;
-  true -> ok
+check_match_found(_Doc, false) -> ok;
+check_match_found(Doc, _) ->
+  case lists:keyfind(<<"n">>, 1, Doc) of
+    {_, 0} -> {emongo_no_match_found, Doc};
+    {_, _} -> ok;
+    false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
 
 to_binary(V) when is_binary(V) -> V;
