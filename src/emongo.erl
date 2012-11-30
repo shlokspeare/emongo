@@ -246,8 +246,8 @@ update_all(PoolId, Collection, Selector, Document)
 
 %------------------------------------------------------------------------------
 % update_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, {error, no_match_found} will be
-% returned.
+% If no documents match the input Selector, {emongo_no_match_found, DbResponse}
+% will be returned.
 %------------------------------------------------------------------------------
 update_sync(PoolId, Collection, Selector, Document)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
@@ -300,8 +300,8 @@ delete(PoolId, Collection, Selector) ->
 
 %------------------------------------------------------------------------------
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
-% If no documents match the input Selector, {error, no_match_found} will be
-% returned.
+% If no documents match the input Selector, {emongo_no_match_found, DbResponse}
+% will be returned.
 %------------------------------------------------------------------------------
 delete_sync(PoolId, Collection) ->
   delete_sync(PoolId, Collection, []).
@@ -722,7 +722,7 @@ transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout ->
   transform_options(Rest, EmoQuery);
 transform_options([Ignore | Rest], EmoQuery) when Ignore == check_match_found;
                                                   Ignore == response_options;
-                                                  Ignore == use_primary ->
+                                                  Ignore == ?USE_PRIMARY ->
   transform_options(Rest, EmoQuery);
 transform_options([Invalid | _Rest], _EmoQuery) ->
   throw({emongo_invalid_option, Invalid}).
@@ -808,7 +808,7 @@ sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
   end,
   case lists:member(response_options, Options) of
     true  -> Resp;
-    false -> get_sync_result(Resp, Options)
+    false -> get_sync_result(Resp, lists:member(check_match_found, Options))
   end.
 
 send_recv_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet,
@@ -826,22 +826,21 @@ send_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet) ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
   end.
 
-get_sync_result(#response{documents = [Doc]}, Options) ->
-  case lists:keysearch(<<"err">>, 1, Doc) of
-    {value, {_, undefined}} -> check_match_found(Doc, Options);
-    {value, {_, Msg}}     -> {error, Msg};
-    _             -> {error, {invalid_error_message, Doc}}
+get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
+  case lists:keyfind(<<"err">>, 1, Doc) of
+    {_, undefined} -> check_match_found(Doc, CheckMatchFound);
+    {_, Msg}       -> throw({emongo_error, Msg});
+    _              -> throw({emongo_error, {invalid_error_message, Doc}})
   end;
-get_sync_result(Resp, _Options) -> {error, {invalid_response, Resp}}.
+get_sync_result(Resp, _CheckMatchFound) ->
+  throw({emongo_error, {invalid_response, Resp}}).
 
-check_match_found(Doc, Options) ->
-  case lists:member(check_match_found, Options) of
-  true ->
-    case lists:keyfind(<<"n">>, 1, Doc) of
-    {_, N} when N >= 1 -> ok;
-    _          -> {error, no_match_found}
-    end;
-  false -> ok
+check_match_found(_Doc, false) -> ok;
+check_match_found(Doc, _) ->
+  case lists:keyfind(<<"n">>, 1, Doc) of
+    {_, 0} -> {emongo_no_match_found, Doc};
+    {_, _} -> ok;
+    false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
 
 to_binary(V) when is_binary(V) -> V;
