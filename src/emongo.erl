@@ -263,8 +263,12 @@ update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
   Packet1 = emongo_packet:update(Pool#pool.database, Collection,
                                  Pool#pool.req_id, Upsert, false, Selector,
                                  Document),
-  sync_command(update_sync, Collection, Selector, [check_match_found | Options],
-               {Pid, Pool}, Packet1).
+  Options1 = case Upsert of
+    true -> Options;
+    _    -> [check_match_found | Options]
+  end,
+  sync_command(update_sync, Collection, Selector, Options1, {Pid, Pool},
+               Packet1).
 
 %------------------------------------------------------------------------------
 % update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
