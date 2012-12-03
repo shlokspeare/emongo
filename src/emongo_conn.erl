@@ -65,18 +65,17 @@ gen_call(Pid, Label, ReqID, Request, Timeout) ->
 		Error -> exit({emongo_conn_error, Error})
 	end.
 
-loop(State, Leftover) ->
-	try
-		Socket = State#state.socket,
-		{NewState, NewLeftover} = receive
+loop(#state{socket = Socket} = State, Leftover) ->
+	{NewState, NewLeftover} = try
+		receive
 			{'$emongo_conn_send', {From, Mref}, {_ReqID, Packet}} ->
 				gen_tcp:send(Socket, Packet),
 				gen:reply({From, Mref}, ok),
 				{State, Leftover};
 			{'$emongo_conn_send_sync', {From, Mref}, {ReqID, Packet1, Packet2}} ->
 				% Packet2 is the packet containing getlasterror.
-				% Send both packets in the same TCP packet for performance reasons.  It's
-				% about 3 times faster.
+				% Send both packets in the same TCP packet for performance reasons.
+				% It's about 3 times faster.
 				gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>),
 				Request = #request{req_id=ReqID, requestor={From, Mref}},
 				State1 = State#state{requests=[{ReqID, Request}|State#state.requests]},
@@ -110,21 +109,21 @@ loop(State, Leftover) ->
 				{_NewState, _NewLeftover} =
 					process_bin(State, <<Leftover/binary, Data/binary>>);
       '$emongo_conn_close' ->
-        exit(emongo_conn_closed);
+        exit(emongo_conn_close);
 			{tcp_closed, Socket} ->
 				exit(emongo_tcp_closed);
 			{tcp_error, Socket, Reason} ->
 				exit({emongo, Reason})
-		end,
-		loop(NewState, NewLeftover)
+		end
 	catch
-	  _:emongo_conn_closed ->
-	    ok;
+	  _:emongo_conn_close ->
+	    exit(normal);
 	  _:Error ->
-		  % The exit message has to include the pool_id and follow a format the
-		  % emongo module expects so this process can be restarted.
-		  exit({?MODULE, State#state.pool_id, Error})
-	end.
+	    % The exit message has to include the pool_id and follow a format the
+	    % emongo module expects so this process can be restarted.
+	    exit({?MODULE, State#state.pool_id, Error})
+	end,
+	loop(NewState, NewLeftover).
 
 open_socket(Host, Port) ->
 	case gen_tcp:connect(Host, Port, [binary, {active, true}]) of
