@@ -3,7 +3,7 @@
 -compile(export_all).
 
 -define(NUM_PROCESSES,     100).
--define(NUM_TESTS_PER_PID, 1000).
+-define(NUM_TESTS_PER_PID, 500).
 -define(POOL,              pool1).
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           60000).
@@ -14,9 +14,11 @@ setup() ->
   ensure_started(emongo),
   emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
                   %"test_username", "test_password"),
+  emongo:delete_sync(?POOL, ?COLL),
   ok.
 
 cleanup(_) ->
+  emongo:delete_sync(?POOL, ?COLL),
   ok.
 
 run_test_() ->
@@ -24,19 +26,43 @@ run_test_() ->
     fun setup/0,
     fun cleanup/1,
     [
+      fun test_upsert/0,
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+test_upsert() ->
+  ?OUT("Testing upsert", []),
+  Selector = [{<<"_id">>, <<"upsert_test">>}],
+  try
+    emongo:delete_sync(?POOL, ?COLL, Selector),
+
+    UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                    [{"$set", [{"data", 1}]}], true),
+    ?assertEqual(ok, UpsertRes1),
+    Find1 = emongo:find_all(?POOL, ?COLL, Selector),
+    ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
+
+    UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                    [{"$set", [{"data", 2}]}], true),
+    ?assertEqual(ok, UpsertRes2),
+    Find2 = emongo:find_all(?POOL, ?COLL, Selector),
+    ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2)
+  after
+    emongo:delete_sync(?POOL, ?COLL, Selector)
+  end,
+  ?OUT("Test passed", []).
+
 test_performance() ->
   ?OUT("Testing performance.", []),
   emongo:delete_sync(?POOL, ?COLL),
   Start = cur_time_ms(),
   try
-    start_processes(?NUM_PROCESSES),
-    block_until_done(?NUM_PROCESSES)
+    Ref = make_ref(),
+    start_processes(Ref),
+    block_until_done(Ref)
   after
     % Clean up in case something failed.
     emongo:delete_sync(?POOL, ?COLL)
@@ -44,51 +70,63 @@ test_performance() ->
   End = cur_time_ms(),
   ?OUT("Test passed in ~p ms\n", [End - Start]).
 
-start_processes(X) when X =< 0 -> ok;
-start_processes(X) ->
+start_processes(Ref) ->
   Pid = self(),
-  proc_lib:spawn(fun() ->
-    run_tests(Pid, X, ?NUM_TESTS_PER_PID)
-  end),
-  start_processes(X - 1).
+  lists:foreach(fun(X) ->
+    proc_lib:spawn(fun() ->
+      lists:foreach(fun(Y) ->
+        run_single_test(X, Y)
+      end, lists:seq(1, ?NUM_TESTS_PER_PID)),
+      Pid ! {Ref, done}
+    end)
+  end, lists:seq(1, ?NUM_PROCESSES)).
 
-run_tests(Pid, _, Y) when Y =< 0 ->
-  Pid ! done;
-run_tests(Pid, X, Y) ->
+run_single_test(X, Y) ->
   Num = (X bsl 16) bor Y, % Make up a unique number for this run
+  Selector = [{<<"_id">>, Num}],
   try
-    IRes = emongo:insert_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
+    IRes = emongo:insert_sync(?POOL, ?COLL, Selector, [response_options]),
     ok = check_result("insert_sync", IRes, 0),
 
-    [FMRes] = emongo:find_and_modify(?POOL, ?COLL, [{"_id", Num}],
+    [FMRes] = emongo:find_and_modify(?POOL, ?COLL, Selector,
       [{<<"$set">>, [{<<"fm">>, Num}]}], [{new, true}]),
     FMVal = proplists:get_value(<<"value">>, FMRes),
-    ?assertEqual([{<<"_id">>, Num}, {<<"fm">>, Num}], FMVal),
+    ?assertEqual(Selector ++ [{<<"fm">>, Num}], FMVal),
 
-    URes = emongo:update_sync(?POOL, ?COLL, [{"_id", Num}],
+    URes = emongo:update_sync(?POOL, ?COLL, Selector,
       [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
     ok = check_result("update_sync", URes, 1),
 
-    FARes = emongo:find_all(?POOL, ?COLL, [{"_id", Num}]),
-    ?assertEqual([[{<<"_id">>, Num}, {<<"fm">>, Num}, {<<"us">>, Num}]], FARes),
+    FARes = emongo:find_all(?POOL, ?COLL, Selector),
+    ?assertEqual([Selector ++ [{<<"fm">>, Num}, {<<"us">>, Num}]], FARes),
 
-    DRes = emongo:delete_sync(?POOL, ?COLL, [{"_id", Num}], [response_options]),
+    DRes = emongo:delete_sync(?POOL, ?COLL, Selector, [response_options]),
     ok = check_result("delete_sync", DRes, 1)
   catch _:E ->
     ?OUT("Exception occurred for test ~.16b: ~p\n~p\n",
               [Num, E, erlang:get_stacktrace()]),
     throw(test_failed)
-  end,
-  run_tests(Pid, X, Y - 1).
+  end.
 
-block_until_done(X) when X =< 0 -> ok;
-block_until_done(X) ->
-  receive done -> ok
-  after ?TIMEOUT ->
-    ?OUT("No response\n", []),
-    throw(test_failed)
-  end,
-  block_until_done(X - 1).
+check_result(Desc,
+             {response, _,_,_,_,_, [List]},
+             ExpectedN) when is_list(List) ->
+  {_, Err} = lists:keyfind(<<"err">>, 1, List),
+  {_, N}   = lists:keyfind(<<"n">>,   1, List),
+  if Err == undefined, N == ExpectedN -> ok;
+  true ->
+    ?OUT("Unexpected result for ~p: Err = ~p; N = ~p", [Desc, Err, N]),
+    throw({error, invalid_db_response})
+  end.
+
+block_until_done(Ref) ->
+  lists:foreach(fun(_) ->
+    receive {Ref, done} -> ok
+    after ?TIMEOUT ->
+      ?OUT("No response\n", []),
+      throw(test_failed)
+    end
+  end, lists:seq(1, ?NUM_PROCESSES)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -101,14 +139,3 @@ ensure_started(App) ->
 cur_time_ms() ->
   {MegaSec, Sec, MicroSec} = erlang:now(),
   MegaSec * 1000000000 + Sec * 1000 + erlang:round(MicroSec / 1000).
-
-check_result(Desc,
-             {response, _,_,_,_,_, [List]},
-             ExpectedN) when is_list(List) ->
-  {_, Err} = lists:keyfind(<<"err">>, 1, List),
-  {_, N}   = lists:keyfind(<<"n">>,   1, List),
-  if Err == undefined, N == ExpectedN -> ok;
-  true ->
-    ?OUT("Unexpected result for ~p: Err = ~p; N = ~p", [Desc, Err, N]),
-    throw({error, invalid_db_response})
-  end.
