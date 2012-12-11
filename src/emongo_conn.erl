@@ -30,7 +30,7 @@
 -include("emongo.hrl").
 
 start_link(PoolId, Host, Port) ->
-	proc_lib:start_link(?MODULE, init, [PoolId, Host, Port, self()]).
+	proc_lib:start_link(?MODULE, init, [PoolId, Host, Port, self()], ?TIMEOUT).
 
 init(PoolId, Host, Port, Parent) ->
 	Socket = open_socket(Host, Port),
