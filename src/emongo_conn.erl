@@ -30,7 +30,7 @@
 -include("emongo.hrl").
 
 start_link(PoolId, Host, Port) ->
-	proc_lib:start_link(?MODULE, init, [PoolId, Host, Port, self()]).
+	proc_lib:start_link(?MODULE, init, [PoolId, Host, Port, self()], ?TIMEOUT).
 
 init(PoolId, Host, Port, Parent) ->
 	Socket = open_socket(Host, Port),
@@ -60,7 +60,16 @@ gen_call(Pid, Label, ReqID, Request, Timeout) ->
 		{ok, Result} -> Result;
 		{'EXIT', timeout} ->
 			% Clear the state from the timed out call
-      gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout),
+      try
+        gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout)
+      catch
+        _:{'EXIT', timeout} ->
+          % If a timeout occurred while trying to communicate with the
+          % connection pid, something is really backed up.  However, if this
+          % happens after a connection goes down, it's expected.
+          exit({emongo_conn_error, overloaded});
+        _:E -> E % Let the original error bubble up.
+      end,
 		  exit({emongo_conn_error, timeout});
 		Error -> exit({emongo_conn_error, Error})
 	end.
@@ -78,7 +87,7 @@ loop(#state{socket = Socket} = State, Leftover) ->
 				% It's about 3 times faster.
 				gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>),
 				Request = #request{req_id=ReqID, requestor={From, Mref}},
-				State1 = State#state{requests=[{ReqID, Request}|State#state.requests]},
+				State1 = State#state{requests=[{ReqID, Request} | State#state.requests]},
 				{State1, Leftover};
 			{'$emongo_conn_send_recv', {From, Mref}, {ReqID, Packet}} ->
 				gen_tcp:send(Socket, Packet),
@@ -86,25 +95,27 @@ loop(#state{socket = Socket} = State, Leftover) ->
 				State1 = State#state{requests=[{ReqID, Request}|State#state.requests]},
 				{State1, Leftover};
 			{'$emongo_recv_timeout', {From, Mref}, ReqID} ->
-				case lists:keytake(ReqID, 1, State#state.requests) of
-					false ->
-						gen:reply({From, Mref}, ok),
-						{State, Leftover};
-					{value, _, Others} ->
-						gen:reply({From, Mref}, ok),
-						%Loop again, but drop any leftovers to
-						%prevent the loop response processing
-						%from getting out of sync and causing all
-						%subsequent calls to send_recv to fail.
-						%loop(State#state{requests=Others}, <<>>)
+        % If this ReqID has timed out, everything behind it in the list has also
+        % timed out.  If the timeout message is missed, those requests still
+        % need to be cleaned up.  This will do that instead of only cleaning up
+        % the input ReqID.
+        Fun = fun({Req, _Request}) when Req == ReqID -> false;
+                 (_)                                 -> true
+              end,
+        NewReqs = lists:takewhile(Fun, State#state.requests),
+				gen:reply({From, Mref}, ok),
 
-						% Leave Leftover there because it could be from a different
-						% request than the one timing out.  This Pid is still in the
-						% pool and can still be used by other processes.  If the
-						% data gets out of sync, the socket needs to be closed and
-						% reopened.
-						{State#state{requests=Others}, Leftover}
-				end;
+				%Loop again, but drop any leftovers to
+				%prevent the loop response processing
+				%from getting out of sync and causing all
+				%subsequent calls to send_recv to fail.
+				%loop(State#state{requests=Others}, <<>>)
+
+				% Leave Leftover there because it could be from a different request than
+				% the one timing out.  This Pid is still in the pool and can still be
+				% used by other processes.  If the data gets out of sync, the socket
+				% needs to be closed and reopened.
+				{State#state{requests = NewReqs}, Leftover};
 			{tcp, Socket, Data} ->
 				{_NewState, _NewLeftover} =
 					process_bin(State, <<Leftover/binary, Data/binary>>);
@@ -126,7 +137,7 @@ loop(#state{socket = Socket} = State, Leftover) ->
 	loop(NewState, NewLeftover).
 
 open_socket(Host, Port) ->
-	case gen_tcp:connect(Host, Port, [binary, {active, true}]) of
+	case gen_tcp:connect(Host, Port, [binary, {active, true}, {nodelay, true}]) of
 		{ok, Sock} ->
 			Sock;
 		{error, Reason} ->

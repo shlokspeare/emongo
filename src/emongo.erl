@@ -842,7 +842,11 @@ get_sync_result(Resp, _CheckMatchFound) ->
 check_match_found(_Doc, false) -> ok;
 check_match_found(Doc, _) ->
   case lists:keyfind(<<"n">>, 1, Doc) of
-    {_, 0} -> {emongo_no_match_found, Doc};
+    {_, 0} ->
+      case lists:keyfind(<<"updatedExisting">>, 1, Doc) of
+        {_, true} -> ok;
+        _         ->  {emongo_no_match_found, Doc}
+      end;
     {_, _} -> ok;
     false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
