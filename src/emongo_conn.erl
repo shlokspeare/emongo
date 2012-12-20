@@ -137,7 +137,7 @@ loop(#state{socket = Socket} = State, Leftover) ->
 	loop(NewState, NewLeftover).
 
 open_socket(Host, Port) ->
-	case gen_tcp:connect(Host, Port, [binary, {active, true}]) of
+	case gen_tcp:connect(Host, Port, [binary, {active, true}, {nodelay, true}]) of
 		{ok, Sock} ->
 			Sock;
 		{error, Reason} ->
