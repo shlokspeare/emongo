@@ -6,8 +6,8 @@
 
 ## Run Unit Tests
 
-  make test
-  make check
+	make test
+	make check
 
 ## Start emongo
 
@@ -82,19 +82,19 @@ __Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req
 
 ## Remove Pool
 
-  emongo:remove_pool(PoolId) -> ok
+	emongo:remove_pool(PoolId) -> ok
 
 ## Pools
 
-  emongo:pools() -> [Pool]
+	emongo:pools() -> [Pool]
 
 ## Oid
 
-  emongo:oid() -> Oid
+	emongo:oid() -> Oid
 
 ## Oid Generation Time
 
-  emongo:oid_generation_time({oid, Oid}) -> int() (32-bit Unix time)
+	emongo:oid_generation_time({oid, Oid}) -> int() (32-bit Unix time)
 
 ## Insert
 
@@ -122,7 +122,7 @@ __Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req
 
 ## Update All
 
-  %% update all is the same as update, except that the multi flag is set to true.
+	%% update all is the same as update, except that the multi flag is set to true.
 	emongo:update_all(PoolId, CollectionName, Selector, Document) -> ok
 
 ## Delete
@@ -137,19 +137,19 @@ __Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req
 
 Insert, update, and delete each have a counter part, insert_sync, update_sync, and delete_sync, that calls getLastError after performing the action.  These calls block until the action has completed on the Mongo server.
 
-  emongo:insert_sync(PoolId, CollectionName, Documents) -> ok
-  emongo:insert_sync(PoolId, CollectionName, Documents, Options) -> ok
+	emongo:insert_sync(PoolId, CollectionName, Documents) -> ok
+	emongo:insert_sync(PoolId, CollectionName, Documents, Options) -> ok
 
-  emongo:update_sync(PoolId, CollectionName, Selector, Document) -> ok | {emongo_no_match_found, Error}
-  emongo:update_sync(PoolId, CollectionName, Selector, Document, Upsert) -> ok | {emongo_no_match_found, Error}
-  emongo:update_sync(PoolId, CollectionName, Selector, Document, Upsert, Options) -> ok | {emongo_no_match_found, Error}
+	emongo:update_sync(PoolId, CollectionName, Selector, Document) -> ok | {emongo_no_match_found, Error}
+	emongo:update_sync(PoolId, CollectionName, Selector, Document, Upsert) -> ok | {emongo_no_match_found, Error}
+	emongo:update_sync(PoolId, CollectionName, Selector, Document, Upsert, Options) -> ok | {emongo_no_match_found, Error}
 
-  emongo:update_all_sync(PoolId, Collection, Selector, Document) -> ok
-  emongo:update_all_sync(PoolId, Collection, Selector, Document, Options) -> ok
+	emongo:update_all_sync(PoolId, Collection, Selector, Document) -> ok
+	emongo:update_all_sync(PoolId, Collection, Selector, Document, Options) -> ok
 
-  emongo:delete_sync(PoolId, CollectionName) -> ok | {emongo_no_match_found, Error}
-  emongo:delete_sync(PoolId, CollectionName, Selector) -> ok | {emongo_no_match_found, Error}
-  emongo:delete_sync(PoolId, Collection, Selector, Options) -> ok | {emongo_no_match_found, Error}
+	emongo:delete_sync(PoolId, CollectionName) -> ok | {emongo_no_match_found, Error}
+	emongo:delete_sync(PoolId, CollectionName, Selector) -> ok | {emongo_no_match_found, Error}
+	emongo:delete_sync(PoolId, Collection, Selector, Options) -> ok | {emongo_no_match_found, Error}
 
 ## Find
 
@@ -231,33 +231,33 @@ __nested queries__
 
 Find all matching documents, using the returned cursor to get more data as necessary.
 
-  emongo:find_all(PoolId, Collection) -> Result
-  emongo:find_all(PoolId, Collection, Selector) -> Result
-  emongo:find_all(PoolId, Collection, Selector, Options) -> Result
+	emongo:find_all(PoolId, Collection) -> Result
+	emongo:find_all(PoolId, Collection, Selector) -> Result
+	emongo:find_all(PoolId, Collection, Selector, Options) -> Result
 
 ## Find One
 
 Find only the first matching document.
 
-  emongo:find_one(PoolId, Collection, Selector) -> Result
-  emongo:find_one(PoolId, Collection, Selector, Options) -> Result
+	emongo:find_one(PoolId, Collection, Selector) -> Result
+	emongo:find_one(PoolId, Collection, Selector, Options) -> Result
 
 ## Ensure Index
 
-  emongo:ensure_index(PoolId, Collection, Keys, Unique) -> ok
+	emongo:ensure_index(PoolId, Collection, Keys, Unique) -> ok
 
 ## Count
 
-  emongo:count(PoolId, Collection) -> int() | undefined
-  emongo:count(PoolId, Collection, Selector) -> int() | undefined
-  emongo:count(PoolId, Collection, Selector, Options) -> int() | undefined
+	emongo:count(PoolId, Collection) -> int() | undefined
+	emongo:count(PoolId, Collection, Selector) -> int() | undefined
+	emongo:count(PoolId, Collection, Selector, Options) -> int() | undefined
 
 ## Aggregate
 
-  emongo:aggregate(PoolId, Collection, Pipeline) -> Result
-  emongo:aggregate(PoolId, Collection, Pipeline, Options) -> Result
+	emongo:aggregate(PoolId, Collection, Pipeline) -> Result
+	emongo:aggregate(PoolId, Collection, Pipeline, Options) -> Result
 
 ## Find and Modify
 
-  emongo:find_and_modify(PoolId, Collection, Selector, Document) -> Result
-  emongo:find_and_modify(PoolId, Collection, Selector, Document, Options) -> Result
+	emongo:find_and_modify(PoolId, Collection, Selector, Document) -> Result
+	emongo:find_and_modify(PoolId, Collection, Selector, Document, Options) -> Result
