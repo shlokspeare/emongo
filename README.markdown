@@ -62,7 +62,8 @@ __Upsert__ = true | false (insert a new document if the selector does not match 
 __Key__ = string() | atom() | binary() | integer()  
 __Val__ = float() | string() | binary() | Document | {array, [term()]} | {binary, BinSubType, binary()} | {oid, binary()} | {oid, string()} | bool() | now() | datetime() | undefined | {regexp, string(), string()} | integer()  
 __BinSubType__ = integer() <http://www.mongodb.org/display/DOCS/BSON#BSON-noteondatabinary>  
-__Options__ = {timeout, Timeout} | {limit, Limit} | {offset, Offset} | {orderby, Orderby} | {fields, Fields} | response_options  
+__Options__ = [Option]  
+__Option__ = {timeout, Timeout} | {limit, Limit} | {offset, Offset} | {orderby, Orderby} | {fields, Fields} | response_options | ?USE_PRIMARY | {Key, Val} | integer  
 __Timeout__ = integer (timeout in milliseconds)  
 __Limit__ = integer  
 __Offset__ = integer  
@@ -94,7 +95,7 @@ __Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req
 
 ## Oid Generation Time
 
-	emongo:oid_generation_time({oid, Oid}) -> int() (32-bit Unix time)
+	emongo:oid_generation_time({oid, Oid}) -> integer (32-bit Unix time)
 
 ## Insert
 
@@ -152,6 +153,8 @@ Insert, update, and delete each have a counter part, insert_sync, update_sync, a
 	emongo:delete_sync(PoolId, Collection, Selector, Options) -> ok | {emongo_no_match_found, Error}
 
 ## Find
+
+All find operations default to "slaveOk".  If the primary Mongo server is to be used for the latest copy of the data, the option ?USE_PRIMARY is available.
 
 	emongo:find(PoolId, CollectionName, Selector, Options) -> Result
 
@@ -248,9 +251,9 @@ Find only the first matching document.
 
 ## Count
 
-	emongo:count(PoolId, Collection) -> int() | undefined
-	emongo:count(PoolId, Collection, Selector) -> int() | undefined
-	emongo:count(PoolId, Collection, Selector, Options) -> int() | undefined
+	emongo:count(PoolId, Collection) -> integer | undefined
+	emongo:count(PoolId, Collection, Selector) -> integer | undefined
+	emongo:count(PoolId, Collection, Selector, Options) -> integer | undefined
 
 ## Aggregate
 
