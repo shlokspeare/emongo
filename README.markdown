@@ -47,33 +47,33 @@ start the app and then add as many pools as you like
 
 ## API Type Reference
 
-__PoolId__ = atom()
-__Host__ = string()
-__Port__ = integer()
-__Database__ = string()
-__PoolSize__ = integer()
-__User__ = string()
-__Pass__ = string()
-__CollectionName__ = string()
-__Selector__ = Document
-__Document__ = [{Key, Val}]
-__Documents__ = [Document]
-__Upsert__ = true | false (insert a new document if the selector does not match an existing document)
-__Key__ = string() | atom() | binary() | integer()
-__Val__ = float() | string() | binary() | Document | {array, [term()]} | {binary, BinSubType, binary()} | {oid, binary()} | {oid, string()} | bool() | now() | datetime() | undefined | {regexp, string(), string()} | integer()
-__BinSubType__ = integer() <http://www.mongodb.org/display/DOCS/BSON#BSON-noteondatabinary>
-__Options__ = {timeout, Timeout} | {limit, Limit} | {offset, Offset} | {orderby, Orderby} | {fields, Fields} | response_options
-__Timeout__ = integer (timeout in milliseconds)
-__Limit__ = integer
-__Offset__ = integer
-__Orderby__ = [{Key, Direction}]
-__Direction__ = 1 | -1 | asc | desc
-__Fields__ = [Key] = specifies a list of fields to return in the result set
-__response_options__ = return #response{header, response_flag, cursor_id, offset, limit, documents}
-__Result__ = [Document] | response()
-__Pipeline__ = Document
-__Oid__ = binary()
-__Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req_id}
+__PoolId__ = atom()  
+__Host__ = string()  
+__Port__ = integer()  
+__Database__ = string()  
+__PoolSize__ = integer()  
+__User__ = string()  
+__Pass__ = string()  
+__CollectionName__ = string()  
+__Selector__ = Document  
+__Document__ = [{Key, Val}]  
+__Documents__ = [Document]  
+__Upsert__ = true | false (insert a new document if the selector does not match an existing document)  
+__Key__ = string() | atom() | binary() | integer()  
+__Val__ = float() | string() | binary() | Document | {array, [term()]} | {binary, BinSubType, binary()} | {oid, binary()} | {oid, string()} | bool() | now() | datetime() | undefined | {regexp, string(), string()} | integer()  
+__BinSubType__ = integer() <http://www.mongodb.org/display/DOCS/BSON#BSON-noteondatabinary>  
+__Options__ = {timeout, Timeout} | {limit, Limit} | {offset, Offset} | {orderby, Orderby} | {fields, Fields} | response_options  
+__Timeout__ = integer (timeout in milliseconds)  
+__Limit__ = integer  
+__Offset__ = integer  
+__Orderby__ = [{Key, Direction}]  
+__Direction__ = 1 | -1 | asc | desc  
+__Fields__ = [Key] = specifies a list of fields to return in the result set  
+__response_options__ = return #response{header, response_flag, cursor_id, offset, limit, documents}  
+__Result__ = [Document] | response()  
+__Pipeline__ = Document  
+__Oid__ = binary()  
+__Pool__ = #pool{id, host, port, database, size, user, pass_hash, conn_pids, req_id}  
 
 ## Add Pool
 
