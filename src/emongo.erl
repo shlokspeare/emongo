@@ -37,7 +37,7 @@
          aggregate/3, aggregate/4,
          count/3, count/4,
          find_and_modify/4, find_and_modify/5,
-         get_timing/0, total_db_time_usec/0, clear_timing/0,
+         total_db_time_usec/0, clear_timing/0,
          dec2hex/1, hex2dec/1,
          utf8_encode/1]).
 
@@ -47,13 +47,8 @@
 -define(TIME(Desc, Code),
   begin
     {TimeUsec, Res} = timer:tc(fun() -> Code end),
-    % Put the desecription and time taken into the process dictionary and then check the returned value.  If something
-    % used to be there, then add it back in with this new timing at the end of the list.
-    TimingData = [{Desc, TimeUsec}],
-    case erlang:put(?TIMING_KEY, TimingData) of
-      undefined -> ok;
-      PrevVal   -> erlang:put(?TIMING_KEY, PrevVal ++ TimingData)
-    end,
+    TimeSoFar = case erlang:get(?TIMING_KEY) of undefined -> 0; T -> T end,
+    erlang:put(?TIMING_KEY, TimeSoFar + TimeUsec),
     Res
   end).
 
@@ -429,17 +424,8 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
 
 %drop_collection(PoolId, Collection) when is_atom(PoolId), is_list(Collection) ->
 
-% Timing is returned as follows: [{Desc, TimeUsec}], where Desc = {Command, Collection, Selector, Options} and TimeUsec
-% is the number of microseconds taken for that command to execute.  Timing is stored for each process in the process
-% dictionary until clear_timing() is called.
-get_timing() ->
-  case erlang:get(?TIMING_KEY) of
-    undefined -> [];
-    R         -> R
-  end.
-
 total_db_time_usec() ->
-  lists:foldl(fun({_Desc, TimeUsec}, Sum) -> Sum + TimeUsec end, 0, get_timing()).
+  erlang:get(?TIMING_KEY).
 
 clear_timing() ->
   erlang:erase(?TIMING_KEY).
