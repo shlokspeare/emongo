@@ -27,6 +27,7 @@ run_test_() ->
     fun cleanup/1,
     [
       fun test_upsert/0,
+      fun test_timing/0,
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
@@ -55,6 +56,13 @@ test_upsert() ->
   end,
   ?OUT("Test passed", []).
 
+test_timing() ->
+  ?OUT("Testing timing", []),
+  emongo:clear_timing(),
+  run_single_test(1, 1),
+  ?OUT("DB Time: ~p usec", [emongo:total_db_time_usec()]),
+  ?OUT("Test passed", []).
+
 test_performance() ->
   ?OUT("Testing performance.", []),
   emongo:delete_sync(?POOL, ?COLL),
@@ -74,7 +82,7 @@ start_processes(Ref) ->
   Pid = self(),
   lists:foreach(fun(X) ->
     proc_lib:spawn(fun() ->
-      lists:foreach(fun(Y) ->
+      lists:map(fun(Y) ->
         run_single_test(X, Y)
       end, lists:seq(1, ?NUM_TESTS_PER_PID)),
       Pid ! {Ref, done}

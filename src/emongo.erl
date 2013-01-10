@@ -25,19 +25,37 @@
 
 -export([start_link/0, init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
-
--export([pools/0, oid/0, oid_generation_time/1, add_pool/5, add_pool/7,
-         remove_pool/1, find/4, find_all/2, find_all/3, find_all/4,
-         get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
-         insert/3, insert_sync/3, insert_sync/4, update/4, update/5,
-         update_all/4, update_sync/4, update_sync/5, update_sync/6,
-         update_all_sync/4, update_all_sync/5, delete/2, delete/3,
-         delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/4, count/2,
+-export([oid/0, oid_generation_time/1,
+         pools/0, add_pool/5, add_pool/7, remove_pool/1,
+         find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
+         insert/3, insert_sync/3, insert_sync/4,
+         update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
+         update_all_sync/5,
+         delete/2, delete/3, delete_sync/2, delete_sync/3, delete_sync/4,
+         ensure_index/4,
+         count/2,
          aggregate/3, aggregate/4,
-         count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
-         hex2dec/1, utf8_encode/1]).
+         count/3, count/4,
+         find_and_modify/4, find_and_modify/5,
+         get_timing/0, total_db_time_usec/0, clear_timing/0,
+         dec2hex/1, hex2dec/1,
+         utf8_encode/1]).
 
 -include("emongo.hrl").
+
+-define(TIMING_KEY, emongo_timing).
+-define(TIME(Desc, Code),
+  begin
+    {TimeUsec, Res} = timer:tc(fun() -> Code end),
+    % Put the desecription and time taken into the process dictionary and then check the returned value.  If something
+    % used to be there, then add it back in with this new timing at the end of the list.
+    TimingData = [{Desc, TimeUsec}],
+    case erlang:put(?TIMING_KEY, TimingData) of
+      undefined -> ok;
+      PrevVal   -> erlang:put(?TIMING_KEY, PrevVal ++ TimingData)
+    end,
+    Res
+  end).
 
 -record(state, {pools, oid_index, hashed_hostn}).
 
@@ -113,8 +131,7 @@ find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
   Query = create_query(Options, Selector),
   Packet = emongo_packet:do_query(Pool#pool.database, Collection,
                                   Pool#pool.req_id, Query),
-  Resp = send_recv_command(find, Collection, Selector, Options, Pid,
-                           Pool#pool.req_id, Packet,
+  Resp = send_recv_command(find, Collection, Selector, Options, Pid, Pool#pool.req_id, Packet,
                            proplists:get_value(timeout, Options, ?TIMEOUT)),
   case lists:member(response_options, Options) of
     true -> Resp;
@@ -411,6 +428,21 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
   end.
 
 %drop_collection(PoolId, Collection) when is_atom(PoolId), is_list(Collection) ->
+
+% Timing is returned as follows: [{Desc, TimeUsec}], where Desc = {Command, Collection, Selector, Options} and TimeUsec
+% is the number of microseconds taken for that command to execute.  Timing is stored for each process in the process
+% dictionary until clear_timing() is called.
+get_timing() ->
+  case erlang:get(?TIMING_KEY) of
+    undefined -> [];
+    R         -> R
+  end.
+
+total_db_time_usec() ->
+  lists:foldl(fun({_Desc, TimeUsec}, Sum) -> Sum + TimeUsec end, 0, get_timing()).
+
+clear_timing() ->
+  erlang:erase(?TIMING_KEY).
 
 %====================================================================
 % gen_server callbacks
@@ -806,7 +838,8 @@ sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
   Packet2 = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
                                    Query1),
   Resp = try
-    emongo_conn:send_sync(Pid, Pool#pool.req_id, Packet1, Packet2, ?TIMEOUT)
+    ?TIME({Command, Collection, Selector, Options},
+          emongo_conn:send_sync(Pid, Pool#pool.req_id, Packet1, Packet2, ?TIMEOUT))
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end,
@@ -818,14 +851,16 @@ sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
 send_recv_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet,
                   Timeout) ->
   try
-    emongo_conn:send_recv(Pid, ReqID, Packet, Timeout)
+    ?TIME({Command, Collection, Selector, ExtraInfo},
+          emongo_conn:send_recv(Pid, ReqID, Packet, Timeout))
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
   end.
 
 send_command(Command, Collection, Selector, ExtraInfo, Pid, ReqID, Packet) ->
   try
-    emongo_conn:send(Pid, ReqID, Packet)
+    ?TIME({Command, Collection, Selector, ExtraInfo},
+          emongo_conn:send(Pid, ReqID, Packet))
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
   end.
