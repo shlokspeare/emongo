@@ -425,7 +425,10 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
 %drop_collection(PoolId, Collection) when is_atom(PoolId), is_list(Collection) ->
 
 total_db_time_usec() ->
-  erlang:get(?TIMING_KEY).
+  case erlang:get(?TIMING_KEY) of
+    undefined -> 0;
+    R         -> R
+  end.
 
 clear_timing() ->
   erlang:erase(?TIMING_KEY).
