@@ -98,7 +98,8 @@ remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
 
 queued_messages() ->
-  lists:map(fun({PoolId, #pool{conn_pids = Pids}}) ->
+  lists:map(fun({PoolId, #pool{conn_pids = Queue}}) ->
+    Pids = queue:to_list(Queue),
     {PoolId, lists:sum([begin {_, Len} = erlang:process_info(Pid, message_queue_len), Len end || Pid <- Pids])}
   end, pools()).
 
