@@ -26,7 +26,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/7, remove_pool/1,
+         pools/0, add_pool/5, add_pool/7, remove_pool/1, queued_messages/0,
          find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
@@ -96,6 +96,11 @@ add_pool(PoolId, Host, Port, Database, Size, User, Pass) ->
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
+
+queued_messages() ->
+  lists:map(fun({PoolId, #pool{conn_pids = Pids}}) ->
+    {PoolId, lists:sum([begin {_, Len} = erlang:process_info(Pid, message_queue_len), Len end || Pid <- Pids])}
+  end, pools()).
 
 %------------------------------------------------------------------------------
 % find
