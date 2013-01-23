@@ -97,7 +97,7 @@ socket_writer(PoolId, Socket, EtsTid, ListenPid) ->
     ListenPid ! emongo_conn_close,
     gen_tcp:close(Socket),
     ets:delete(EtsTid),
-    ?INFO("~s: Writer exiting", [?MODULE]),
+    ?EXCEPTION("~s: Writer exiting", [?MODULE]),
     case Error of
       emongo_conn_close -> exit(normal);
       _                 -> exit({?MODULE, PoolId, Error})
@@ -128,7 +128,7 @@ socket_listener(EtsTid, Leftover, WritePid) ->
     end
   catch _:_ ->
     WritePid ! emongo_listen_exited,
-    ?INFO("~s: Reader exiting", [?MODULE]),
+    ?EXCEPTION("~s: Reader exiting", [?MODULE]),
     exit(normal)
   end,
   socket_listener(EtsTid, NewLeftover, WritePid).
