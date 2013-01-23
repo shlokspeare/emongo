@@ -79,7 +79,7 @@ socket_writer(PoolId, Socket, EtsTid, ListenPid) ->
       % FromRef = {From, Mref}
       {emongo_conn_send, FromRef, {_ReqId, Packet}} ->
         ok = gen_tcp:send(Socket, Packet),
-        ok = gen:reply(FromRef, ok);
+        gen:reply(FromRef, ok);
       {emongo_conn_send_sync, FromRef, {ReqId, Packet1, Packet2}} ->
         true = ets:insert_new(EtsTid, {ReqId, FromRef}),
         % Packet2 is the packet containing getlasterror.
