@@ -71,7 +71,6 @@ init_writer(PoolId, Host, Port) ->
   {ok, ListenPid} = start_listener(EtsTid, WritePid),
   ok = gen_tcp:controlling_process(Socket, ListenPid),
   ok = proc_lib:init_ack({ok, #conn{listen_pid = ListenPid, write_pid = WritePid}}),
-  ?INFO("~s: Writer started", [?MODULE]),
   socket_writer(PoolId, Socket, EtsTid, ListenPid).
 
 socket_writer(PoolId, Socket, EtsTid, ListenPid) ->
@@ -97,10 +96,12 @@ socket_writer(PoolId, Socket, EtsTid, ListenPid) ->
     ListenPid ! emongo_conn_close,
     gen_tcp:close(Socket),
     ets:delete(EtsTid),
-    ?EXCEPTION("~s: Writer exiting", [?MODULE]),
     case Error of
-      emongo_conn_close -> exit(normal);
-      _                 -> exit({?MODULE, PoolId, Error})
+      emongo_conn_close ->
+        exit(normal);
+      _ ->
+        ?EXCEPTION("~s: Writer exiting: ~p", [?MODULE, Error]),
+        exit({?MODULE, PoolId, Error})
     end
   end,
   socket_writer(PoolId, Socket, EtsTid, ListenPid).
@@ -110,7 +111,6 @@ start_listener(EtsTid, WritePid) ->
 
 init_listener(EtsTid, WritePid) ->
   proc_lib:init_ack({ok, self()}),
-  ?INFO("~s: Reader started", [?MODULE]),
   socket_listener(EtsTid, <<>>, WritePid).
 
 socket_listener(EtsTid, Leftover, WritePid) ->
@@ -126,9 +126,13 @@ socket_listener(EtsTid, Leftover, WritePid) ->
       {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
       emongo_conn_close            -> exit(emongo_conn_close)
     end
-  catch _:_ ->
+  catch _:Error ->
     WritePid ! emongo_listen_exited,
-    ?EXCEPTION("~s: Reader exiting", [?MODULE]),
+    case Error of
+      emongo_conn_close -> ok;
+      _ ->
+        ?EXCEPTION("~s: Reader exiting: ~p", [?MODULE, Error])
+    end,
     exit(normal)
   end,
   socket_listener(EtsTid, NewLeftover, WritePid).
