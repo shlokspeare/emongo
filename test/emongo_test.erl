@@ -2,10 +2,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
--define(NUM_PROCESSES,     500).
--define(NUM_TESTS_PER_PID, 100).
+-define(NUM_PROCESSES,     100).
+-define(NUM_TESTS_PER_PID, 500).
 -define(POOL,              pool1).
--define(POOL_SIZE,         35).
+-define(POOL_SIZE,         10).
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           60000).
 -define(OUT(F, D),         ?debugFmt(F, D)).
