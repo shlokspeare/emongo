@@ -2,9 +2,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
--define(NUM_PROCESSES,     100).
--define(NUM_TESTS_PER_PID, 500).
+-define(NUM_PROCESSES,     500).
+-define(NUM_TESTS_PER_PID, 100).
 -define(POOL,              pool1).
+-define(POOL_SIZE,         35).
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           60000).
 -define(OUT(F, D),         ?debugFmt(F, D)).
@@ -12,7 +13,7 @@
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
-  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
+  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE),
                   %"test_username", "test_password"),
   emongo:delete_sync(?POOL, ?COLL),
   ok.
@@ -60,7 +61,9 @@ test_timing() ->
   ?OUT("Testing timing", []),
   emongo:clear_timing(),
   run_single_test(1, 1),
-  ?OUT("DB Time: ~p usec", [emongo:total_db_time_usec()]),
+  ?OUT("DB Total Time: ~p usec", [emongo:total_db_time_usec()]),
+  ?OUT("DB Timing Breakdown: ~p", [emongo:db_timing()]),
+  ?OUT("DB Queue Lengths: ~p", [emongo:queue_lengths()]),
   ?OUT("Test passed", []).
 
 test_performance() ->
@@ -128,13 +131,26 @@ check_result(Desc,
   end.
 
 block_until_done(Ref) ->
-  lists:foreach(fun(_) ->
-    receive {Ref, done} -> ok
-    after ?TIMEOUT ->
-      ?OUT("No response\n", []),
-      throw(test_failed)
-    end
-  end, lists:seq(1, ?NUM_PROCESSES)).
+  block_until_done(Ref, 0).
+
+block_until_done(_, ?NUM_PROCESSES) -> ok;
+block_until_done(Ref, NumDone) ->
+  ToAdd =
+    receive {Ref, done} -> 1
+    after 1000 ->
+      ?OUT("DB Queue Lengths: ~p", [emongo:queue_lengths()]),
+      0
+    end,
+  block_until_done(Ref, NumDone + ToAdd).
+
+%block_until_done(Ref) ->
+%  lists:foreach(fun(_) ->
+%    receive {Ref, done} -> ok
+%    after ?TIMEOUT ->
+%      ?OUT("No response\n", []),
+%      throw(test_failed)
+%    end
+%  end, lists:seq(1, ?NUM_PROCESSES)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
