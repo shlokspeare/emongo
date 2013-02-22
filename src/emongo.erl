@@ -26,7 +26,8 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/7, remove_pool/1, queue_lengths/0, register_collections_to_databases/2,
+         pools/0, add_pool/5, add_pool/7, add_pool/8, remove_pool/1, queue_lengths/0,
+         register_collections_to_databases/2,
          find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
@@ -82,12 +83,15 @@ oid_generation_time(Oid) when is_binary(Oid) andalso size(Oid) =:= 12 ->
   UnixTime.
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size,
-                            undefined, undefined}, infinity).
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, undefined, undefined, []}, infinity).
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size,
-                            User, pass_hash(User, Pass)}, infinity).
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass), []},
+                  infinity).
+
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, SocketOptions) ->
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass),
+                            SocketOptions}, infinity).
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
@@ -507,7 +511,7 @@ handle_call(oid, _From, State) ->
   {reply, <<UnixTime:32/signed, (State#state.hashed_hostn)/binary, PID/binary,
             Index:24>>, State#state{oid_index = State#state.oid_index + 1}};
 
-handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash},
+handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash, SocketOptions},
             _From, #state{pools=Pools}=State) ->
   {Result, Pools1} =
     case proplists:is_defined(PoolId, Pools) of
@@ -522,7 +526,8 @@ handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash},
                      database  = Database,
                      size      = Size,
                      user      = User,
-                     pass_hash = PassHash},
+                     pass_hash = PassHash,
+                     socket_options = SocketOptions},
         Pool1 = do_open_connections(Pool),
         {ok, [{PoolId, Pool1} | Pools]}
     end,
@@ -637,16 +642,17 @@ initialize_pools() ->
        end || {PoolId, Props} <- Pools]
   end.
 
-do_open_connections(#pool{id        = PoolId,
-                          host      = Host,
-                          port      = Port,
-                          size      = Size,
-                          user      = User,
-                          pass_hash = PassHash,
-                          conns     = Conns} = Pool) ->
+do_open_connections(#pool{id             = PoolId,
+                          host           = Host,
+                          port           = Port,
+                          size           = Size,
+                          user           = User,
+                          pass_hash      = PassHash,
+                          socket_options = SocketOptions,
+                          conns          = Conns} = Pool) ->
   case queue:len(Conns) < Size of
     true ->
-      case emongo_conn:start_link(PoolId, Host, Port) of
+      case emongo_conn:start_link(PoolId, Host, Port, SocketOptions) of
         {error, Reason} ->
           throw({emongo_error, Reason});
         {ok, Conn} ->
