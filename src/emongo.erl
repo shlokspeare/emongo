@@ -26,7 +26,8 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/7, remove_pool/1, queue_lengths/0, register_collections_to_databases/2,
+         pools/0, add_pool/5, add_pool/7, add_pool/8, remove_pool/1, queue_lengths/0,
+         register_collections_to_databases/2,
          find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
@@ -82,12 +83,15 @@ oid_generation_time(Oid) when is_binary(Oid) andalso size(Oid) =:= 12 ->
   UnixTime.
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size,
-                            undefined, undefined}, infinity).
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, undefined, undefined, []}, infinity).
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size,
-                            User, pass_hash(User, Pass)}, infinity).
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass), []},
+                  infinity).
+
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, SocketOptions) ->
+  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass),
+                            SocketOptions}, infinity).
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
@@ -230,7 +234,7 @@ insert_sync(PoolId, Collection, DocumentsIn, Options) ->
     ?IS_DOCUMENT(DocumentsIn)      -> [DocumentsIn]
   end,
 
-  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:insert(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id, Documents),
   sync_command(insert_sync, Collection, undefined, Options, {Conn, Pool},
@@ -279,7 +283,7 @@ update_sync(PoolId, Collection, Selector, Document, Upsert)
 
 update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
-  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:update(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id, Upsert, false, Selector,
                                  Document),
@@ -299,7 +303,7 @@ update_all_sync(PoolId, Collection, Selector, Document)
 
 update_all_sync(PoolId, Collection, Selector, Document, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
-  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:update(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id, false, true, Selector,
                                  Document),
@@ -334,7 +338,7 @@ delete_sync(PoolId, Collection, Selector) ->
   delete_sync(PoolId, Collection, Selector, []).
 
 delete_sync(PoolId, Collection, Selector, Options) ->
-  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:delete(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id,
                                  transform_selector(Selector)),
@@ -507,7 +511,7 @@ handle_call(oid, _From, State) ->
   {reply, <<UnixTime:32/signed, (State#state.hashed_hostn)/binary, PID/binary,
             Index:24>>, State#state{oid_index = State#state.oid_index + 1}};
 
-handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash},
+handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash, SocketOptions},
             _From, #state{pools=Pools}=State) ->
   {Result, Pools1} =
     case proplists:is_defined(PoolId, Pools) of
@@ -522,7 +526,8 @@ handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash},
                      database  = Database,
                      size      = Size,
                      user      = User,
-                     pass_hash = PassHash},
+                     pass_hash = PassHash,
+                     socket_options = SocketOptions},
         Pool1 = do_open_connections(Pool),
         {ok, [{PoolId, Pool1} | Pools]}
     end,
@@ -541,7 +546,9 @@ handle_call({remove_pool, PoolId}, _From, #state{pools=Pools}=State) ->
     end,
   {reply, Result, State#state{pools=Pools1}};
 
-handle_call({conn, PoolId}, _From, #state{pools=Pools}=State) ->
+handle_call({conn, PoolId}, From, State) ->
+  handle_call({conn, PoolId, 1}, From, State);
+handle_call({conn, PoolId, NumReqs}, _From, #state{pools = Pools} = State) ->
   case get_pool(PoolId, Pools) of
     undefined ->
       {reply, {undefined, undefined}, State};
@@ -549,7 +556,7 @@ handle_call({conn, PoolId}, _From, #state{pools=Pools}=State) ->
       case queue:out(Pool#pool.conns) of
         {{value, Conn}, Q2} ->
           Pool1 = Pool#pool{conns = queue:in(Conn, Q2),
-                            req_id = ((Pool#pool.req_id)+1)},
+                            req_id = ((Pool#pool.req_id) + NumReqs)},
           Pools1 = [{PoolId, Pool1}|Others],
           {reply, {Conn, Pool}, State#state{pools=Pools1}};
         {empty, _} ->
@@ -635,16 +642,17 @@ initialize_pools() ->
        end || {PoolId, Props} <- Pools]
   end.
 
-do_open_connections(#pool{id        = PoolId,
-                          host      = Host,
-                          port      = Port,
-                          size      = Size,
-                          user      = User,
-                          pass_hash = PassHash,
-                          conns     = Conns} = Pool) ->
+do_open_connections(#pool{id             = PoolId,
+                          host           = Host,
+                          port           = Port,
+                          size           = Size,
+                          user           = User,
+                          pass_hash      = PassHash,
+                          socket_options = SocketOptions,
+                          conns          = Conns} = Pool) ->
   case queue:len(Conns) < Size of
     true ->
-      case emongo_conn:start_link(PoolId, Host, Port) of
+      case emongo_conn:start_link(PoolId, Host, Port, SocketOptions) of
         {error, Reason} ->
           throw({emongo_error, Reason});
         {ok, Conn} ->
@@ -864,12 +872,13 @@ hex0(15) -> $f;
 hex0(I)  -> $0 + I.
 
 sync_command(Command, Collection, Selector, Options, {Conn, Pool}, Packet1) ->
+  % When this connection was requested, two request ids were allocated, so using req_id + 1 is safe.
+  GetLastErrorReqId = Pool#pool.req_id + 1,
   Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
-  Packet2 = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id,
-                                   Query1),
+  Packet2 = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", GetLastErrorReqId, Query1),
   Resp = try
     time_call({Command, Collection, Selector, Options},
-              fun() -> emongo_conn:send_sync(Conn, Pool#pool.req_id, Packet1, Packet2, ?TIMEOUT) end)
+              fun() -> emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, ?TIMEOUT) end)
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end,

@@ -1,6 +1,7 @@
 -include_lib("emongo_public.hrl").
 
--record(pool, {id, host, port, database, size=1, user, pass_hash, conns=queue:new(), req_id=1}).
+-record(pool, {id, host, port, database, size=1, user=undefined, pass_hash=undefined, socket_options=[],
+               conns=queue:new(), req_id=1}).
 -record(header, {message_length, request_id, response_to, op_code}).
 -record(emo_query, {opts=0, offset=0, limit=16#7FFFFFFF, q=[], field_selector=[]}).
 

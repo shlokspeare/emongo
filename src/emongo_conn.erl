@@ -22,14 +22,14 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
 -include("emongo.hrl").
--export([start_link/3, stop/1, send/3, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
--export([init_writer/3, init_listener/2]).
+-export([start_link/4, stop/1, send/3, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
+-export([init_writer/4, init_listener/2]).
 -record(conn, {listen_pid, write_pid}).
 
 % The underlying socket is going to be handled by two Pids: one to write to it and one to read from it.  Besides the
 % maintenance nightmare of having to coordinate these two Pids, it should maximize the throughput of this connection.
-start_link(PoolId, Host, Port) ->
-  start_writer(PoolId, Host, Port).
+start_link(PoolId, Host, Port, SocketOptions) ->
+  start_writer(PoolId, Host, Port, SocketOptions).
 
 stop(#conn{write_pid = WritePid}) ->
   WritePid ! emongo_conn_close.
@@ -59,11 +59,11 @@ write_pid(#conn{write_pid = WritePid}) -> WritePid.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-start_writer(PoolId, Host, Port) ->
-  {ok, _} = proc_lib:start_link(?MODULE, init_writer, [PoolId, Host, Port], ?TIMEOUT).
+start_writer(PoolId, Host, Port, SocketOptions) ->
+  {ok, _} = proc_lib:start_link(?MODULE, init_writer, [PoolId, Host, Port, SocketOptions], ?TIMEOUT).
 
-init_writer(PoolId, Host, Port) ->
-  Socket = open_socket(Host, Port),
+init_writer(PoolId, Host, Port, SocketOptions) ->
+  Socket = open_socket(Host, Port, SocketOptions),
   % Note that the Ets table name is not unique since several connections will be made.  However, this is not a
   % named_table, so that should be okay.  The name should not be used.
   EtsTid = ets:new(?MODULE, [public, {write_concurrency, true}]),
@@ -139,8 +139,8 @@ socket_listener(EtsTid, Leftover, WritePid) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-open_socket(Host, Port) ->
-  case gen_tcp:connect(Host, Port, [binary, {active, true}, {nodelay, true}]) of
+open_socket(Host, Port, SocketOptions) ->
+  case gen_tcp:connect(Host, Port, [binary, {active, true} | SocketOptions]) of
     {ok, Sock} ->
       Sock;
     {error, Reason} ->
