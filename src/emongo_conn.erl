@@ -22,120 +22,84 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
 -include("emongo.hrl").
--export([start_link/4, stop/1, send/3, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
--export([init_writer/4, init_listener/2]).
--record(conn, {listen_pid, write_pid}).
+-export([start_link/5, stop/1, send/3, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
+-export([init_loop/5]).
 
-% The underlying socket is going to be handled by two Pids: one to write to it and one to read from it.  Besides the
-% maintenance nightmare of having to coordinate these two Pids, it should maximize the throughput of this connection.
-start_link(PoolId, Host, Port, SocketOptions) ->
-  start_writer(PoolId, Host, Port, SocketOptions).
+-record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0}).
 
-stop(#conn{write_pid = WritePid}) ->
-  WritePid ! emongo_conn_close.
-  % The WritePid will tell the ListenPid to exit.
+start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
+  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, SocketOptions], ?TIMEOUT).
 
-send(Conn, ReqId, Packet) ->
-  gen_call(Conn, emongo_conn_send, ReqId, {ReqId, Packet}, ?TIMEOUT).
+stop(Pid) ->
+  Pid ! emongo_conn_close.
 
-send_sync(Conn, ReqId, Packet1, Packet2, Timeout) ->
-  Resp = gen_call(Conn, emongo_conn_send_sync, ReqId,
+send(Pid, ReqId, Packet) ->
+  gen_call(Pid, emongo_conn_send, ReqId, {ReqId, Packet}, ?TIMEOUT).
+
+send_sync(Pid, ReqId, Packet1, Packet2, Timeout) ->
+  Resp = gen_call(Pid, emongo_conn_send_sync, ReqId,
                   {ReqId, Packet1, Packet2}, Timeout),
   Documents = emongo_bson:decode(Resp#response.documents),
   Resp#response{documents=Documents}.
 
-send_recv(Conn, ReqId, Packet, Timeout) ->
-  Resp = gen_call(Conn, emongo_conn_send_recv, ReqId, {ReqId, Packet},
+send_recv(Pid, ReqId, Packet, Timeout) ->
+  Resp = gen_call(Pid, emongo_conn_send_recv, ReqId, {ReqId, Packet},
                   Timeout),
   Documents = emongo_bson:decode(Resp#response.documents),
   Resp#response{documents=Documents}.
 
-queue_lengths(#conn{listen_pid = ListenPid, write_pid = WritePid}) ->
-  {_, ListenQueueLen} = erlang:process_info(ListenPid, message_queue_len),
-  {_, WriteQueueLen}  = erlang:process_info(WritePid,  message_queue_len),
-  {ListenQueueLen, WriteQueueLen}.
+queue_lengths(Pid) ->
+  {_, QueueLen}  = erlang:process_info(Pid,  message_queue_len),
+  QueueLen.
 
-write_pid(#conn{write_pid = WritePid}) -> WritePid.
+write_pid(Pid) -> Pid.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-start_writer(PoolId, Host, Port, SocketOptions) ->
-  {ok, _} = proc_lib:start_link(?MODULE, init_writer, [PoolId, Host, Port, SocketOptions], ?TIMEOUT).
-
-init_writer(PoolId, Host, Port, SocketOptions) ->
+init_loop(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
   Socket = open_socket(Host, Port, SocketOptions),
-  % Note that the Ets table name is not unique since several connections will be made.  However, this is not a
-  % named_table, so that should be okay.  The name should not be used.
-  EtsTid = ets:new(?MODULE, [public, {write_concurrency, true}]),
-  WritePid = self(),
-  {ok, ListenPid} = start_listener(EtsTid, WritePid),
-  ok = gen_tcp:controlling_process(Socket, ListenPid),
-  ok = proc_lib:init_ack({ok, #conn{listen_pid = ListenPid, write_pid = WritePid}}),
-  socket_writer(PoolId, Socket, EtsTid, ListenPid).
+  ok = proc_lib:init_ack({ok, self()}),
+  loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth}).
 
-socket_writer(PoolId, Socket, EtsTid, ListenPid) ->
-  try
-    receive
+loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
+  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) =< MaxPipelineDepth),
+  NewState = try
+    _NewState = receive
       % FromRef = {From, Mref}
-      {emongo_conn_send, FromRef, {_ReqId, Packet}} ->
+      {emongo_conn_send, FromRef, {_ReqId, Packet}} when CanSend ->
         ok = gen_tcp:send(Socket, Packet),
-        gen:reply(FromRef, ok);
-      {emongo_conn_send_sync, FromRef, {ReqId, Packet1, Packet2}} ->
-        true = ets:insert_new(EtsTid, {ReqId, FromRef}),
+        gen:reply(FromRef, ok),
+        State;
+      {emongo_conn_send_sync, FromRef, {ReqId, Packet1, Packet2}} when CanSend ->
         % Packet2 is the packet containing getlasterror.
         % Send both packets in the same TCP packet for performance reasons.
         % It's about 3 times faster.
-        ok = gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>);
-      {emongo_conn_send_recv, FromRef, {ReqId, Packet}} ->
-        true = ets:insert_new(EtsTid, {ReqId, FromRef}),
-        ok = gen_tcp:send(Socket, Packet);
-      emongo_listen_exited -> exit(emongo_listen_exited);
-      emongo_conn_close    -> exit(emongo_conn_close)
+        ok = gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>),
+        State#state{dict = dict:append(ReqId, FromRef, Dict)};
+      {emongo_conn_send_recv, FromRef, {ReqId, Packet}} when CanSend ->
+        ok = gen_tcp:send(Socket, Packet),
+        State#state{dict = dict:append(ReqId, FromRef, Dict)};
+      {tcp, _Socket, NewData} ->
+        _NS = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>});
+      {emongo_recv_timeout, FromRef, ReqId} ->
+        gen:reply(FromRef, ok),
+        State#state{dict = dict:erase(ReqId, Dict)};
+      {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
+      {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
+      emongo_listen_exited         -> exit(emongo_listen_exited);
+      emongo_conn_close            -> exit(emongo_conn_close)
     end
   catch _:Error ->
-    ListenPid ! emongo_conn_close,
     gen_tcp:close(Socket),
-    ets:delete(EtsTid),
     case Error of
       emongo_conn_close ->
         exit(normal);
       _ ->
-        ?EXCEPTION("~s: Writer exiting: ~p", [?MODULE, Error]),
+        ?EXCEPTION("Exiting: ~p", [Error]),
         exit({?MODULE, PoolId, Error})
     end
   end,
-  socket_writer(PoolId, Socket, EtsTid, ListenPid).
-
-start_listener(EtsTid, WritePid) ->
-  proc_lib:start_link(?MODULE, init_listener, [EtsTid, WritePid], ?TIMEOUT).
-
-init_listener(EtsTid, WritePid) ->
-  proc_lib:init_ack({ok, self()}),
-  socket_listener(EtsTid, <<>>, WritePid).
-
-socket_listener(EtsTid, Leftover, WritePid) ->
-  NewLeftover = try
-    receive
-      {tcp, _Socket, Data} ->
-        _NewLeftovers = process_bin(EtsTid, <<Leftover/binary, Data/binary>>);
-      {emongo_recv_timeout, FromRef, ReqId} ->
-        ets:delete(EtsTid, ReqId),
-        gen:reply(FromRef, ok),
-        Leftover;
-      {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
-      {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
-      emongo_conn_close            -> exit(emongo_conn_close)
-    end
-  catch _:Error ->
-    WritePid ! emongo_listen_exited,
-    case Error of
-      emongo_conn_close -> ok;
-      _ ->
-        ?EXCEPTION("~s: Reader exiting: ~p", [?MODULE, Error])
-    end,
-    exit(normal)
-  end,
-  socket_listener(EtsTid, NewLeftover, WritePid).
+  loop(PoolId, Socket, NewState).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -147,13 +111,13 @@ open_socket(Host, Port, SocketOptions) ->
       exit({emongo_failed_to_open_socket, Reason})
   end.
 
-gen_call(#conn{write_pid = WritePid, listen_pid = ListenPid}, Label, ReqId, Request, Timeout) ->
-  case catch gen:call(WritePid, Label, Request, Timeout) of
+gen_call(Pid, Label, ReqId, Request, Timeout) ->
+  case catch gen:call(Pid, Label, Request, Timeout) of
     {ok, Result} -> Result;
     {'EXIT', timeout} ->
       % Clear the ets table from the timed out call
       try
-        gen:call(ListenPid, emongo_recv_timeout, ReqId, Timeout)
+        gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
       catch
         _:{'EXIT', timeout} ->
           % If a timeout occurred while trying to communicate with the
@@ -166,19 +130,18 @@ gen_call(#conn{write_pid = WritePid, listen_pid = ListenPid}, Label, ReqId, Requ
     Error -> exit({emongo_conn_error, Error})
   end.
 
-process_bin(_EtsTid, <<>>) -> <<>>;
-process_bin(EtsTid, Bin) ->
-  case emongo_packet:decode_response(Bin) of
-    undefined -> Bin;
+process_bin(State = #state{dict = Dict, socket_data = Data}) ->
+  case emongo_packet:decode_response(Data) of
+    undefined -> State;
     {Resp = #response{header = #header{response_to = ResponseTo}}, Tail} ->
-      case ets:lookup(EtsTid, ResponseTo) of
-        [{_, FromRef} | _] ->
-          ets:delete(EtsTid, ResponseTo),
-          gen:reply(FromRef, Resp);
-        _ ->
-          % Request already timed out.
-          ok
+      StateDict = try
+        [FromRef] = dict:fetch(ResponseTo, Dict),
+        gen:reply(FromRef, Resp),
+        State#state{dict = dict:erase(ResponseTo, Dict)}
+      catch _:badarg ->
+        % The request must have timed out.
+        State
       end,
       % Continue processing Tail in case there's another complete message in it.
-      process_bin(EtsTid, Tail)
+      process_bin(StateDict#state{socket_data = Tail})
   end.

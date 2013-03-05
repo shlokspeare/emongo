@@ -1,6 +1,6 @@
 -include_lib("emongo_public.hrl").
 
--record(pool, {id, host, port, database, size=1, user=undefined, pass_hash=undefined, socket_options=[],
+-record(pool, {id, host, port, database, size=1, user, pass_hash, max_pipeline_depth = 0, socket_options = [],
                conns=queue:new(), req_id=1}).
 -record(header, {message_length, request_id, response_to, op_code}).
 -record(emo_query, {opts=0, offset=0, limit=16#7FFFFFFF, q=[], field_selector=[]}).
@@ -29,8 +29,9 @@
 -define(OP_DELETE, 2006).
 -define(OP_KILL_CURSORS, 2007).
 
--define(DEBUG(Fmt, Args),     ok). % io:format("DEBUG: " Fmt "\n", Args)).
--define(INFO(Fmt, Args),      ok). % io:format("INFO: "  Fmt "\n", Args)).
--define(WARN(Fmt, Args),      io:format("WARNING: "   Fmt "\n",     Args)).
--define(EXCEPTION(Fmt, Args), io:format("EXCEPTION: " Fmt "\n~p\n", Args ++ [erlang:get_stacktrace()])).
--define(ERROR(Fmt, Args),     io:format("ERROR: "     Fmt "\n",     Args)).
+-define(WARN(Fmt, Args),      io:format("WARNING (~p:~p): "   Fmt "\n",
+                                        [?MODULE, ?LINE | Args])).
+-define(EXCEPTION(Fmt, Args), io:format("EXCEPTION (~p:~p): " Fmt "\n~p\n",
+                                        [?MODULE, ?LINE | Args] ++ [erlang:get_stacktrace()])).
+-define(ERROR(Fmt, Args),     io:format("ERROR (~p:~p): "     Fmt "\n",
+                                        [?MODULE, ?LINE | Args])).

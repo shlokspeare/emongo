@@ -26,7 +26,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/7, add_pool/8, remove_pool/1, queue_lengths/0,
+         pools/0, add_pool/5, add_pool/7, add_pool/9, remove_pool/1, queue_lengths/0,
          register_collections_to_databases/2,
          find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
@@ -83,15 +83,31 @@ oid_generation_time(Oid) when is_binary(Oid) andalso size(Oid) =:= 12 ->
   UnixTime.
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, undefined, undefined, []}, infinity).
+  gen_server:call(?MODULE, {add_pool, #pool{id       = PoolId,
+                                            host     = Host,
+                                            port     = Port,
+                                            database = DefaultDatabase,
+                                            size     = Size}}, infinity).
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass), []},
-                  infinity).
+  gen_server:call(?MODULE, {add_pool, #pool{id        = PoolId,
+                                            host      = Host,
+                                            port      = Port,
+                                            database  = DefaultDatabase,
+                                            size      = Size,
+                                            user      = User,
+                                            pass_hash = pass_hash(User, Pass)}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, SocketOptions) ->
-  gen_server:call(?MODULE, {add_pool, PoolId, Host, Port, DefaultDatabase, Size, User, pass_hash(User, Pass),
-                            SocketOptions}, infinity).
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, MaxPipelineDepth, SocketOptions) ->
+  gen_server:call(?MODULE, {add_pool, #pool{id                 = PoolId,
+                                            host               = Host,
+                                            port               = Port,
+                                            database           = DefaultDatabase,
+                                            size               = Size,
+                                            user               = User,
+                                            pass_hash          = pass_hash(User, Pass),
+                                            max_pipeline_depth = MaxPipelineDepth,
+                                            socket_options     = SocketOptions}}, infinity).
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
@@ -99,8 +115,8 @@ remove_pool(PoolId) ->
 queue_lengths() ->
   lists:map(fun({PoolId, #pool{conns = Queue}}) ->
     Conns = queue:to_list(Queue),
-    {ListenQueueLens, WriteQueueLens} = lists:unzip([emongo_conn:queue_lengths(Conn) || Conn <- Conns]),
-    {PoolId, lists:sum(ListenQueueLens), lists:sum(WriteQueueLens)}
+    QueueLens = [emongo_conn:queue_lengths(Conn) || Conn <- Conns],
+    {PoolId, lists:sum(QueueLens)}
   end, pools()).
 
 % The default database is passed in when a pool is created.  However, if you want to use that same pool to talk to other
@@ -511,8 +527,7 @@ handle_call(oid, _From, State) ->
   {reply, <<UnixTime:32/signed, (State#state.hashed_hostn)/binary, PID/binary,
             Index:24>>, State#state{oid_index = State#state.oid_index + 1}};
 
-handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash, SocketOptions},
-            _From, #state{pools=Pools}=State) ->
+handle_call({add_pool, NewPool = #pool{id = PoolId}}, _From, #state{pools = Pools} = State) ->
   {Result, Pools1} =
     case proplists:is_defined(PoolId, Pools) of
       true ->
@@ -520,15 +535,7 @@ handle_call({add_pool, PoolId, Host, Port, Database, Size, User, PassHash, Socke
         Pool1 = do_open_connections(Pool),
         {ok, [{PoolId, Pool1} | proplists:delete(PoolId, Pools)]};
       false ->
-        Pool = #pool{id        = PoolId,
-                     host      = Host,
-                     port      = Port,
-                     database  = Database,
-                     size      = Size,
-                     user      = User,
-                     pass_hash = PassHash,
-                     socket_options = SocketOptions},
-        Pool1 = do_open_connections(Pool),
+        Pool1 = do_open_connections(NewPool),
         {ok, [{PoolId, Pool1} | Pools]}
     end,
   {reply, Result, State#state{pools=Pools1}};
@@ -642,17 +649,18 @@ initialize_pools() ->
        end || {PoolId, Props} <- Pools]
   end.
 
-do_open_connections(#pool{id             = PoolId,
-                          host           = Host,
-                          port           = Port,
-                          size           = Size,
-                          user           = User,
-                          pass_hash      = PassHash,
-                          socket_options = SocketOptions,
-                          conns          = Conns} = Pool) ->
+do_open_connections(#pool{id                 = PoolId,
+                          host               = Host,
+                          port               = Port,
+                          size               = Size,
+                          user               = User,
+                          pass_hash          = PassHash,
+                          max_pipeline_depth = MaxPipelineDepth,
+                          socket_options     = SocketOptions,
+                          conns              = Conns} = Pool) ->
   case queue:len(Conns) < Size of
     true ->
-      case emongo_conn:start_link(PoolId, Host, Port, SocketOptions) of
+      case emongo_conn:start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) of
         {error, Reason} ->
           throw({emongo_error, Reason});
         {ok, Conn} ->
@@ -677,7 +685,8 @@ do_auth(Conn, Pool, User, Hash) ->
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
 
 
-  % TODO: How will this work if multiple databases are used in this pool.
+  % TODO: How will this work if multiple databases are used in this pool.  Perhaps spin through all the registered DB's
+  %       and just use the same username and password for all of them.
 
 
   Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
