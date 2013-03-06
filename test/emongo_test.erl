@@ -61,9 +61,9 @@ test_timing() ->
   ?OUT("Testing timing", []),
   emongo:clear_timing(),
   run_single_test(1, 1),
-  ?OUT("DB Total Time: ~p usec", [emongo:total_db_time_usec()]),
+  ?OUT("DB Total Time: ~p usec",  [emongo:total_db_time_usec()]),
   ?OUT("DB Timing Breakdown: ~p", [emongo:db_timing()]),
-  ?OUT("DB Queue Lengths: ~p", [emongo:queue_lengths()]),
+  ?OUT("DB Queue Lengths: ~p",    [emongo:queue_lengths()]),
   ?OUT("Test passed", []).
 
 test_performance() ->
