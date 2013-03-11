@@ -214,14 +214,8 @@ decode_value(9, <<MSecs:64/little-signed, Tail/binary>>) ->
 %% VOID
 decode_value(10, Tail) ->
 	{undefined, Tail};
-
-
-
-
-% TODO: It would be nice to handle Symbols (type 14).
-
-
-
+	
+%% Symbols (type 14) are handled as strings above (type 2).
 
 %% INT
 decode_value(16, <<Int:32/little-signed, Tail/binary>>) ->
