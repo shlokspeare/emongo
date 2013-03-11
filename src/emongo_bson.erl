@@ -171,7 +171,7 @@ decode_value(1, <<Val:64/little-signed-float, Tail/binary>>) ->
 	{Val, Tail};
 
 %% STRING
-decode_value(2, <<Size:32/little-signed, Tail1/binary>>) ->
+decode_value(Type, <<Size:32/little-signed, Tail1/binary>>) when Type == 2; Type == 14 ->
 	Size1 = Size-1,
 	<<Val:Size1/binary, 0, Tail2/binary>> = Tail1,
 	{Val, Tail2};
@@ -214,14 +214,8 @@ decode_value(9, <<MSecs:64/little-signed, Tail/binary>>) ->
 %% VOID
 decode_value(10, Tail) ->
 	{undefined, Tail};
-
-
-
-
-% TODO: It would be nice to handle Symbols (type 14).
-
-
-
+	
+%% Symbols (type 14) are handled as strings above (type 2).
 
 %% INT
 decode_value(16, <<Int:32/little-signed, Tail/binary>>) ->
