@@ -520,6 +520,7 @@ handle_call(pools, _From, State) ->
   {reply, State#state.pools, State};
 
 handle_call(oid, _From, State) ->
+  % This could be done on a per-connection basis as well, if performance is an issue.
   {MegaSecs, Secs, _} = now(),
   UnixTime = MegaSecs * 1000000 + Secs,
   <<_:20/binary,PID:2/binary,_/binary>> = term_to_binary(self()),
@@ -913,6 +914,16 @@ send_command(Command, Collection, Selector, ExtraInfo, Conn, ReqID, Packet) ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
   end.
 
+
+
+
+
+% TODO: Include selector in emongo_error messages.
+
+
+
+
+
 get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
   case lists:keyfind(<<"err">>, 1, Doc) of
     {_, undefined} -> check_match_found(Doc, CheckMatchFound);
@@ -938,8 +949,9 @@ to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
 to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
 
-convert_fields(Fields) ->
-  [{Field, 1} || Field <- Fields].
+convert_fields([])                    -> [];
+convert_fields([{Field, Val} | Rest]) -> [{Field, Val} | convert_fields(Rest)];
+convert_fields([Field | Rest])        -> [{Field, 1}   | convert_fields(Rest)].
 
 set_slave_ok(OptionsIn) ->
   case lists:member(?USE_PRIMARY, OptionsIn) of
