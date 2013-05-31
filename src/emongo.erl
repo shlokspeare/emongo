@@ -89,7 +89,9 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
                                             database = DefaultDatabase,
                                             size     = Size}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn) ->
+  User = to_binary(UserIn),
+  Pass = to_binary(PassIn),
   gen_server:call(?MODULE, {add_pool, #pool{id        = PoolId,
                                             host      = Host,
                                             port      = Port,
@@ -98,7 +100,9 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
                                             user      = User,
                                             pass_hash = pass_hash(User, Pass)}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, MaxPipelineDepth, SocketOptions) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn, MaxPipelineDepth, SocketOptions) ->
+  User = to_binary(UserIn),
+  Pass = to_binary(PassIn),
   gen_server:call(?MODULE, {add_pool, #pool{id                 = PoolId,
                                             host               = Host,
                                             port               = Port,
@@ -673,7 +677,7 @@ do_open_connections(#pool{id                 = PoolId,
 
 pass_hash(undefined, undefined) -> undefined;
 pass_hash(User, Pass) ->
-  emongo:dec2hex(erlang:md5(User ++ ":mongo:" ++ Pass)).
+  emongo:dec2hex(erlang:md5(<<User/binary, ":mongo:", Pass/binary>>)).
 
 do_auth(_Conn, _Pool, undefined, undefined) -> ok;
 do_auth(Conn, Pool, User, Hash) ->
@@ -681,7 +685,7 @@ do_auth(Conn, Pool, User, Hash) ->
     error -> throw(emongo_getnonce);
     N     -> N
   end,
-  Digest = emongo:dec2hex(erlang:md5(binary_to_list(Nonce) ++ User ++ Hash)),
+  Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, Hash/binary>>)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
 
