@@ -949,6 +949,7 @@ check_match_found(Doc, _) ->
     false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
 
+to_binary(undefined)           -> undefined;
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
 to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
