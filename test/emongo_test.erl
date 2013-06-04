@@ -29,7 +29,9 @@ run_test_() ->
       fun test_upsert/0,
       fun test_fetch_collections/0,
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]},
-      fun test_drop_collection/0
+      fun test_drop_collection/0,
+      fun test_drop_database/0,
+      fun test_upsert/0 %rerun upsert to make sure we can still do our work
     ]
   }].
 
@@ -43,6 +45,10 @@ test_drop_collection() ->
   ?OUT("Testing collection drop", []),
     ok = emongo:drop_collection(?POOL, "test"),
     false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
+
+test_drop_database() ->
+  ?OUT("Testing databsae drop", []),
+  ok = emongo:drop_database(?POOL).
 
 test_upsert() ->
   ?OUT("Testing upsert", []),

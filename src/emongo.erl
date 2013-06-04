@@ -35,10 +35,10 @@
          delete_sync/2, delete_sync/3, delete_sync/4, ensure_index/4, count/2,
          aggregate/3, aggregate/4, get_collections/1, get_collections/2,
          count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
-         hex2dec/1, utf8_encode/1, drop_collection/2, drop_collection/3]).
+         hex2dec/1, utf8_encode/1, drop_collection/2, drop_collection/3,
+         drop_database/1, drop_database/2]).
 
 -include("emongo.hrl").
--include_lib("eunit/include/eunit.hrl").
 -record(state, {pools, oid_index, hashed_hostn}).
 
 %====================================================================
@@ -453,6 +453,29 @@ get_collections(PoolId, Options) when is_atom(PoolId) ->
     _ -> undefined
   end.
 
+%====================================================================
+% db holy cow operations
+%====================================================================
+%this is slightly ghetto fabulous, it just provides a very quick method to
+%truncate the entire db and trash all of the collections
+drop_database(PoolId) -> drop_database(PoolId, []).
+drop_database(PoolId, Options) ->
+  {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+  TQuery = create_query([], [{<<"dropDatabase">>, 1}]),
+  Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  case send_recv_command(drop_collection, "$cmd", Query, [], Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)) of
+    #response{documents=[Res]} ->
+        case lists:keyfind(<<"ok">>, 1, Res) of
+            {<<"ok">>, 1.0} -> ok;
+            _ ->
+                case lists:keyfind(<<"errmsg">>, 1, Res) of
+                    {<<"errmsg">>, Error} -> throw({drop_database_failed, Error});
+                    _ -> throw({drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                end
+        end;
+    _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
+  end.
 %====================================================================
 % gen_server callbacks
 %====================================================================
