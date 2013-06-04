@@ -874,7 +874,6 @@ hex0(15) -> $f;
 hex0(I) ->  $0 + I.
 
 sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
-    ?debugFmt("running ~p", [Command]),
   Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
   Packet2 = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
                                    Query1),
