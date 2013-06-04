@@ -692,11 +692,12 @@ pass_hash(User, Pass) ->
 do_auth(_Conn, #pool{user = undefined, pass_hash = undefined} = Pool) -> Pool;
 do_auth(Conn, Pool) ->
   RegisteredDBs = [Pool#pool.database | [DB || [DB] <- ets:match(?COLL_DB_MAP_ETS, {{Pool#pool.id, '_'}, '$1'})]],
-  do_auth(RegisteredDBs, Conn, Pool).
+  UniqueDBs = lists:usort(RegisteredDBs),
+  do_auth(UniqueDBs, Conn, Pool).
 
 do_auth([], _Conn, Pool) -> Pool;
-do_auth([DB | Others], Conn, #pool{user = User, pass_hash = PassHash} = Pool) ->
-  Nonce = case getnonce(Conn, Pool) of
+do_auth([DB | Others], Conn, #pool{user = User, pass_hash = PassHash, req_id = ReqId} = Pool) ->
+  Nonce = case getnonce(Conn, DB, ReqId) of
     error -> throw(emongo_getnonce);
     N     -> N
   end,
@@ -721,12 +722,11 @@ authorize_conn_for_db(DB, ReqId, Query, Conn) ->
       end
   end.
 
-getnonce(Conn, Pool) ->
+getnonce(Conn, DB, ReqId) ->
   Query1 = #emo_query{q=[{<<"getnonce">>, 1}], limit=1},
-  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
-                                  Query1),
+  Packet = emongo_packet:do_query(DB, "$cmd", ReqId, Query1),
   Resp1 = send_recv_command(getnonce, undefined, undefined, undefined, Conn,
-                            Pool#pool.req_id, Packet, ?TIMEOUT),
+                            ReqId, Packet, ?TIMEOUT),
   case lists:keyfind(<<"nonce">>, 1, lists:nth(1, Resp1#response.documents)) of
     false                -> error;
     {<<"nonce">>, Nonce} -> Nonce
