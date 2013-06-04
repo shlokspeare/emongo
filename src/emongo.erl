@@ -461,15 +461,13 @@ get_collections(PoolId, Options) when is_atom(PoolId) ->
 %truncate the entire db and trash all of the collections
 drop_database(PoolId) -> drop_database(PoolId, []).
 drop_database(PoolId, Options) ->
-    %doing this the hard way that way we can get the last error from the admin db
-    %and not the one we just dropped...this prevents the db from being recreated in
-    %and empty state.
+    %doing this with emongo_conn:send_recv that way we do not get the last error from the
+    %dropped db
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Selector = [{<<"dropDatabase">>, 1}],
   TQuery = create_query([], Selector),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   DropPacket = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
-  %CheckPacket= emongo_packet:do_query("admin", "$cmd", Pool#pool.req_id,#emo_query{q=[{<<"getlasterror">>, 1}], limit=1}),
   try
     case emongo_conn:send_recv(Pid, Pool#pool.req_id, DropPacket,  proplists:get_value(timeout, Options, ?TIMEOUT)) of
         #response{documents=[Res]} ->
