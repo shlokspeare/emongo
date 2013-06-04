@@ -89,7 +89,9 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
                                             database = DefaultDatabase,
                                             size     = Size}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn) ->
+  User = to_binary(UserIn),
+  Pass = to_binary(PassIn),
   gen_server:call(?MODULE, {add_pool, #pool{id        = PoolId,
                                             host      = Host,
                                             port      = Port,
@@ -98,7 +100,9 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass) ->
                                             user      = User,
                                             pass_hash = pass_hash(User, Pass)}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, User, Pass, MaxPipelineDepth, SocketOptions) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn, MaxPipelineDepth, SocketOptions) ->
+  User = to_binary(UserIn),
+  Pass = to_binary(PassIn),
   gen_server:call(?MODULE, {add_pool, #pool{id                 = PoolId,
                                             host               = Host,
                                             port               = Port,
@@ -681,7 +685,7 @@ do_auth(Conn, Pool, User, Hash) ->
     error -> throw(emongo_getnonce);
     N     -> N
   end,
-  Digest = emongo:dec2hex(erlang:md5(binary_to_list(Nonce) ++ User ++ Hash)),
+  Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, Hash/binary>>)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
 
@@ -945,6 +949,7 @@ check_match_found(Doc, _) ->
     false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
 
+to_binary(undefined)           -> undefined;
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
 to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
