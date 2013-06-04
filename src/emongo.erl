@@ -39,6 +39,7 @@
          drop_database/1, drop_database/2]).
 
 -include("emongo.hrl").
+-include_lib("eunit/include/eunit.hrl").
 -record(state, {pools, oid_index, hashed_hostn}).
 
 %====================================================================
@@ -438,7 +439,7 @@ get_collections(PoolId, Options) when is_atom(PoolId) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Query = create_query(Options, []),
   Packet = emongo_packet:do_query(Pool#pool.database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
-  case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Pid, Pool#pool.req_id, Packet, ?TIMEOUT) of
+  case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Pid, Pool#pool.req_id, Packet,  proplists:get_value(timeout, Options, ?TIMEOUT)) of
     #response{documents=Docs} ->
         Database = list_to_binary(Pool#pool.database ++ "."),
         lists:foldl(fun(Doc, Accum) ->
@@ -460,21 +461,30 @@ get_collections(PoolId, Options) when is_atom(PoolId) ->
 %truncate the entire db and trash all of the collections
 drop_database(PoolId) -> drop_database(PoolId, []).
 drop_database(PoolId, Options) ->
+    %doing this the hard way that way we can get the last error from the admin db
+    %and not the one we just dropped...this prevents the db from being recreated in
+    %and empty state.
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-  TQuery = create_query([], [{<<"dropDatabase">>, 1}]),
+  Selector = [{<<"dropDatabase">>, 1}],
+  TQuery = create_query([], Selector),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
-  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
-  case send_recv_command(drop_collection, "$cmd", Query, [], Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)) of
-    #response{documents=[Res]} ->
-        case lists:keyfind(<<"ok">>, 1, Res) of
-            {<<"ok">>, 1.0} -> ok;
-            _ ->
-                case lists:keyfind(<<"errmsg">>, 1, Res) of
-                    {<<"errmsg">>, Error} -> throw({drop_database_failed, Error});
-                    _ -> throw({drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
-                end
-        end;
-    _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
+  DropPacket = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  %CheckPacket= emongo_packet:do_query("admin", "$cmd", Pool#pool.req_id,#emo_query{q=[{<<"getlasterror">>, 1}], limit=1}),
+  try
+    case emongo_conn:send_recv(Pid, Pool#pool.req_id, DropPacket,  proplists:get_value(timeout, Options, ?TIMEOUT)) of
+        #response{documents=[Res]} ->
+            case lists:keyfind(<<"ok">>, 1, Res) of
+                {<<"ok">>, 1.0} -> ok;
+                _ ->
+                    case lists:keyfind(<<"errmsg">>, 1, Res) of
+                        {<<"errmsg">>, Err} -> throw({drop_database_failed, Err});
+                        _ -> throw({drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                    end
+            end;
+        _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
+    end
+  catch _:{emongo_conn_error, Error} ->
+    throw({emongo_conn_error, Error, "$cmd", "undefined", Selector, Options})
   end.
 %====================================================================
 % gen_server callbacks
@@ -585,7 +595,7 @@ handle_info({'EXIT', _, normal}, State) ->
   {noreply, State};
 handle_info({'EXIT', Pid, {emongo_conn, PoolId, Error}},
             #state{pools=Pools}=State) ->
-  io:format("EXIT ~p, {emongo_conn, ~p, ~p} in ~p~n",
+  ?debugFmt("EXIT ~p, {emongo_conn, ~p, ~p} in ~p~n",
         [Pid, PoolId, Error, ?MODULE]),
   State1 =
     case get_pool(PoolId, Pools) of
@@ -866,6 +876,7 @@ hex0(15) -> $f;
 hex0(I) ->  $0 + I.
 
 sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
+    ?debugFmt("running ~p", [Command]),
   Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
   Packet2 = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
                                    Query1),
