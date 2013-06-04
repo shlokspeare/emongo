@@ -673,7 +673,7 @@ do_open_connections(#pool{id                 = PoolId,
 
 pass_hash(undefined, undefined) -> undefined;
 pass_hash(User, Pass) ->
-  emongo:dec2hex(erlang:md5(User ++ ":mongo:" ++ Pass)).
+  emongo:dec2hex(erlang:md5(<<User/binary, ":mongo:", Pass/binary>>)).
 
 do_auth(_Conn, _Pool, undefined, undefined) -> ok;
 do_auth(Conn, Pool, User, Hash) ->
