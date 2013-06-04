@@ -127,7 +127,8 @@ queue_lengths() ->
 % databases, you can override the default database on a per-collection basis.  To do that, call this function.
 % Input is in the format [{Collection, Database}].
 register_collections_to_databases(PoolId, CollDbMap) ->
-  ets:insert(?COLL_DB_MAP_ETS, [{{PoolId, to_binary(Collection)}, Database} || {Collection, Database} <- CollDbMap]).
+  ets:insert(?COLL_DB_MAP_ETS, [{{PoolId, to_binary(Collection)}, Database} || {Collection, Database} <- CollDbMap]),
+  gen_server:call(?MODULE, {authorize_new_dbs, PoolId}).
 
 %------------------------------------------------------------------------------
 % find
@@ -576,6 +577,17 @@ handle_call({conn, PoolId, NumReqs}, _From, #state{pools = Pools} = State) ->
       end
   end;
 
+handle_call({authorize_new_dbs, PoolId}, _From, #state{pools = Pools} = State) ->
+  case get_pool(PoolId, Pools) of
+    undefined ->
+      {reply, undefined, State};
+    {Pool, Others} ->
+      NewPool = lists:foldl(fun(Conn, PoolAcc) ->
+        do_auth(Conn, PoolAcc)
+      end, Pool, queue:to_list(Pool#pool.conns)),
+      {reply, ok, State#state{pools = [{PoolId, NewPool} | Others]}}
+  end;
+
 handle_call(_, _From, State) -> {reply, {error, invalid_call}, State}.
 
 %--------------------------------------------------------------------
@@ -658,8 +670,6 @@ do_open_connections(#pool{id                 = PoolId,
                           host               = Host,
                           port               = Port,
                           size               = Size,
-                          user               = User,
-                          pass_hash          = PassHash,
                           max_pipeline_depth = MaxPipelineDepth,
                           socket_options     = SocketOptions,
                           conns              = Conns} = Pool) ->
@@ -669,8 +679,8 @@ do_open_connections(#pool{id                 = PoolId,
         {error, Reason} ->
           throw({emongo_error, Reason});
         {ok, Conn} ->
-          do_auth(Conn, Pool, User, PassHash),
-          do_open_connections(Pool#pool{conns = queue:in(Conn, Conns)})
+          NewPool = do_auth(Conn, Pool),
+          do_open_connections(NewPool#pool{conns = queue:in(Conn, Conns)})
       end;
     false -> Pool
   end.
@@ -679,28 +689,30 @@ pass_hash(undefined, undefined) -> undefined;
 pass_hash(User, Pass) ->
   emongo:dec2hex(erlang:md5(<<User/binary, ":mongo:", Pass/binary>>)).
 
-do_auth(_Conn, _Pool, undefined, undefined) -> ok;
-do_auth(Conn, Pool, User, Hash) ->
+do_auth(Conn, #pool{user = User, pass_hash = PassHash} = Pool) ->
+  do_auth(Conn, Pool, User, PassHash).
+
+do_auth(_Conn, Pool, undefined, undefined) -> Pool;
+do_auth(Conn, Pool, User, PassHash) ->
   Nonce = case getnonce(Conn, Pool) of
     error -> throw(emongo_getnonce);
     N     -> N
   end,
-  Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, Hash/binary>>)),
+  Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, PassHash/binary>>)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
+  RegisteredDBs = [DB || [DB] <- ets:match(?COLL_DB_MAP_ETS, {{Pool#pool.id, '_'}, '$1'})],
+  NewReqId = authorize_conn_for_dbs([Pool#pool.database | RegisteredDBs], Pool#pool.req_id, Query, Conn),
+  Pool#pool{req_id = NewReqId}.
 
-
-  % TODO: How will this work if multiple databases are used in this pool.  Perhaps spin through all the registered DB's
-  %       and just use the same username and password for all of them.
-
-
-  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
-                                  Query),
-  Resp = send_recv_command(do_auth, undefined, undefined, undefined, Conn,
-                           Pool#pool.req_id, Packet, ?TIMEOUT),
+authorize_conn_for_dbs([], ReqId, _, _) -> ReqId;
+authorize_conn_for_dbs([DB | Rest], ReqId, Query, Conn) ->
+  Packet = emongo_packet:do_query(DB, "$cmd", ReqId, Query),
+  Resp = send_recv_command(do_auth, undefined, undefined, undefined, Conn, ReqId, Packet, ?TIMEOUT),
   [Res] = Resp#response.documents,
   case lists:keyfind(<<"ok">>, 1, Res) of
-    {<<"ok">>, 1.0} -> {ok, authenticated};
+    {<<"ok">>, 1.0} ->
+      authorize_conn_for_dbs(Rest, ReqId + 1, Query, Conn);
     _ ->
       case lists:keyfind(<<"errmsg">>, 1, Res) of
         {<<"errmsg">>, Error} ->
