@@ -689,11 +689,13 @@ pass_hash(undefined, undefined) -> undefined;
 pass_hash(User, Pass) ->
   emongo:dec2hex(erlang:md5(<<User/binary, ":mongo:", Pass/binary>>)).
 
-do_auth(Conn, #pool{user = User, pass_hash = PassHash} = Pool) ->
-  do_auth(Conn, Pool, User, PassHash).
+do_auth(_Conn, #pool{user = undefined, pass_hash = undefined} = Pool) -> Pool;
+do_auth(Conn, Pool) ->
+  RegisteredDBs = [Pool#pool.database | [DB || [DB] <- ets:match(?COLL_DB_MAP_ETS, {{Pool#pool.id, '_'}, '$1'})]],
+  do_auth(RegisteredDBs, Conn, Pool).
 
-do_auth(_Conn, Pool, undefined, undefined) -> Pool;
-do_auth(Conn, Pool, User, PassHash) ->
+do_auth([], _Conn, Pool) -> Pool;
+do_auth([DB | Others], Conn, #pool{user = User, pass_hash = PassHash} = Pool) ->
   Nonce = case getnonce(Conn, Pool) of
     error -> throw(emongo_getnonce);
     N     -> N
@@ -701,18 +703,15 @@ do_auth(Conn, Pool, User, PassHash) ->
   Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, PassHash/binary>>)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
-  RegisteredDBs = [DB || [DB] <- ets:match(?COLL_DB_MAP_ETS, {{Pool#pool.id, '_'}, '$1'})],
-  NewReqId = authorize_conn_for_dbs([Pool#pool.database | RegisteredDBs], Pool#pool.req_id, Query, Conn),
-  Pool#pool{req_id = NewReqId}.
+  authorize_conn_for_db(DB, Pool#pool.req_id, Query, Conn),
+  do_auth(Others, Conn, Pool#pool{req_id = Pool#pool.req_id + 1}).
 
-authorize_conn_for_dbs([], ReqId, _, _) -> ReqId;
-authorize_conn_for_dbs([DB | Rest], ReqId, Query, Conn) ->
+authorize_conn_for_db(DB, ReqId, Query, Conn) ->
   Packet = emongo_packet:do_query(DB, "$cmd", ReqId, Query),
   Resp = send_recv_command(do_auth, undefined, undefined, undefined, Conn, ReqId, Packet, ?TIMEOUT),
   [Res] = Resp#response.documents,
   case lists:keyfind(<<"ok">>, 1, Res) of
-    {<<"ok">>, 1.0} ->
-      authorize_conn_for_dbs(Rest, ReqId + 1, Query, Conn);
+    {<<"ok">>, 1.0} -> ok;
     _ ->
       case lists:keyfind(<<"errmsg">>, 1, Res) of
         {<<"errmsg">>, Error} ->
