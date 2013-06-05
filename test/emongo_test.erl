@@ -18,7 +18,7 @@ setup() ->
   ok.
 
 cleanup(_) ->
-  %emongo:delete_sync(?POOL, ?COLL),
+  emongo:drop_database(?POOL),
   ok.
 
 run_test_() ->
