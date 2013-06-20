@@ -416,7 +416,7 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
 %====================================================================
 drop_collection(PoolId, Collection) -> drop_collection(PoolId, Collection, []).
 
-drop_collection(PoolId, Collection, Options) when is_atom(PoolId), is_list(Collection) ->
+drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   TQuery = create_query([], [{<<"drop">>, Collection}]),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
