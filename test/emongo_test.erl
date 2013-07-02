@@ -13,13 +13,12 @@
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
-  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE),
-                  %"test_username", "test_password"),
+  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE), % "test_username", "test_password"),
   emongo:delete_sync(?POOL, ?COLL),
   ok.
 
 cleanup(_) ->
-  emongo:delete_sync(?POOL, ?COLL),
+  emongo:drop_database(?POOL),
   ok.
 
 run_test_() ->
@@ -28,7 +27,11 @@ run_test_() ->
     fun cleanup/1,
     [
       fun test_upsert/0,
+      fun test_fetch_collections/0,
       fun test_timing/0,
+      fun test_drop_collection/0,
+      fun test_drop_database/0,
+      fun test_upsert/0, % rerun upsert to make sure we can still do our work
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
@@ -57,6 +60,10 @@ test_upsert() ->
   end,
   ?OUT("Test passed", []).
 
+test_fetch_collections() ->
+  ?OUT("Testing collection names fetch", []),
+  [<<"system.indexes">>,<<"test">>] = lists:sort(emongo:get_collections(?POOL)).
+
 test_timing() ->
   ?OUT("Testing timing", []),
   emongo:clear_timing(),
@@ -65,6 +72,15 @@ test_timing() ->
   ?OUT("DB Timing Breakdown: ~p", [emongo:db_timing()]),
   ?OUT("DB Queue Lengths: ~p",    [emongo:queue_lengths()]),
   ?OUT("Test passed", []).
+
+test_drop_collection() ->
+  ?OUT("Testing collection drop", []),
+    ok = emongo:drop_collection(?POOL, "test"),
+    false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
+
+test_drop_database() ->
+  ?OUT("Testing databsae drop", []),
+  ok = emongo:drop_database(?POOL).
 
 test_performance() ->
   ?OUT("Testing performance.", []),
@@ -142,15 +158,6 @@ block_until_done(Ref, NumDone) ->
       0
     end,
   block_until_done(Ref, NumDone + ToAdd).
-
-%block_until_done(Ref) ->
-%  lists:foreach(fun(_) ->
-%    receive {Ref, done} -> ok
-%    after ?TIMEOUT ->
-%      ?OUT("No response\n", []),
-%      throw(test_failed)
-%    end
-%  end, lists:seq(1, ?NUM_PROCESSES)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
