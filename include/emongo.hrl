@@ -28,6 +28,7 @@
 -define(OP_GET_MORE, 2005).
 -define(OP_DELETE, 2006).
 -define(OP_KILL_CURSORS, 2007).
+-define(SYS_NAMESPACES, "system.namespaces").
 
 -define(WARN(Fmt, Args),      io:format("WARNING (~p:~p): "   Fmt "\n",     [?MODULE, ?LINE | Args])).
 -define(EXCEPTION(Fmt, Args), io:format("EXCEPTION (~p:~p): " Fmt "\n~p\n", [?MODULE, ?LINE | Args] ++
