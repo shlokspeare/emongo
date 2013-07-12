@@ -38,6 +38,7 @@
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
+         run_command/3,
          count/2, count/3, count/4,
          total_db_time_usec/0, db_timing/0, clear_timing/0,
          dec2hex/1, hex2dec/1, utf8_encode/1,
@@ -500,6 +501,17 @@ get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
             end
         end, [], Docs);
     _ -> undefined
+  end.
+
+run_command(PoolId, Command, Options) ->
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  Query = #emo_query{q = Command},
+  Packet = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
+  Resp = send_recv_command(command, undefined, undefined, undefined, Conn, Pool#pool.req_id, Packet,
+                           proplists:get_value(timeout, Options, ?TIMEOUT)),
+  case lists:member(response_options, Options) of
+    true -> Resp;
+    false -> Resp#response.documents
   end.
 
 total_db_time_usec() ->
