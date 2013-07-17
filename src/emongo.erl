@@ -444,7 +444,7 @@ get_collections(PoolId, Options) when is_atom(PoolId) ->
         Database = list_to_binary(Pool#pool.database ++ "."),
         lists:foldl(fun(Doc, Accum) ->
             Collection = proplists:get_value(<<"name">>, Doc),
-            case binary:match(Collection, <<".$_">>) of
+            case binary:match(Collection, <<".$">>) of
                 nomatch ->
                     [_Junk, RealName] = binary:split(Collection, Database),
                     [ RealName | Accum ];
