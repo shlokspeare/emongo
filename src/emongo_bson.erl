@@ -197,6 +197,7 @@ decode_value(5, <<_Size:32/little-signed, 2:8/little, BinSize:32/little-signed, 
 decode_value(5, <<Size:32/little-signed, SubType:8/little, BinData:Size/binary-little-unit:8, Tail/binary>>) ->
   	{{binary, SubType, BinData}, Tail};
 
+% This type is depricated:
 decode_value(6, Tail) ->
   	{undefined, Tail};
 
