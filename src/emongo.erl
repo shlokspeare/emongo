@@ -111,7 +111,7 @@ find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
                                                    is_list(OptionsIn) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Options = set_slave_ok(OptionsIn),
-  Query = create_query(Options, Selector),
+  Query = create_query(proplists:delete(timeout, Options), Selector),
   Packet = emongo_packet:do_query(Pool#pool.database, Collection,
                                   Pool#pool.req_id, Query),
   Resp = send_recv_command(find, Collection, Selector, Options, Pid,
@@ -214,8 +214,8 @@ insert_sync(PoolId, Collection, DocumentsIn, Options) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Packet1 = emongo_packet:insert(Pool#pool.database, Collection,
                                  Pool#pool.req_id, Documents),
-  sync_command(insert_sync, Collection, undefined, Options, {Pid, Pool},
-               Packet1).
+  sync_command(insert_sync, Collection, undefined, proplists:delete(timeout, Options), {Pid, Pool},
+               Packet1, proplists:get_value(timeout, Options, ?TIMEOUT)).
 
 %------------------------------------------------------------------------------
 % update
@@ -268,8 +268,8 @@ update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
     true -> Options;
     _    -> [check_match_found | Options]
   end,
-  sync_command(update_sync, Collection, Selector, Options1, {Pid, Pool},
-               Packet1).
+  sync_command(update_sync, Collection, Selector, proplists:delete(timeout, Options1), {Pid, Pool},
+               Packet1, proplists:get_value(timeout, Options, ?TIMEOUT)).
 
 %------------------------------------------------------------------------------
 % update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -287,8 +287,8 @@ update_all_sync(PoolId, Collection, Selector, Document, Options)
   % We could check <<"n">> as the update_sync(...) functions do, but
   % update_all_sync(...) isn't targeting a specific number of documents, so 0
   % updates is legitimate.
-  sync_command(update_all_sync, Collection, Selector, Options, {Pid, Pool},
-               Packet1).
+  sync_command(update_all_sync, Collection, Selector, proplists:delete(timeout, Options), {Pid, Pool},
+               Packet1, proplists:get_value(timeout, Options, ?TIMEOUT)).
 
 %------------------------------------------------------------------------------
 % delete
@@ -319,8 +319,8 @@ delete_sync(PoolId, Collection, Selector, Options) ->
   Packet1 = emongo_packet:delete(Pool#pool.database, Collection,
                                  Pool#pool.req_id,
                                  transform_selector(Selector)),
-  sync_command(delete_sync, Collection, Selector, [check_match_found | Options],
-               {Pid, Pool}, Packet1).
+  sync_command(delete_sync, Collection, Selector, [check_match_found | proplists:delete(timeout, Options)],
+               {Pid, Pool}, Packet1, proplists:get_value(timeout, Options, ?TIMEOUT)).
 
 %------------------------------------------------------------------------------
 % ensure index
@@ -394,7 +394,7 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
   Fields = proplists:get_value(fields, Options, []),
   FieldSelector = convert_fields(Fields),
   Options1 = proplists:delete(fields, Options),
-  Options2 = [{to_binary(Opt), Val} || {Opt, Val} <- Options1],
+  Options2 = [{to_binary(Opt), Val} || {Opt, Val} <- proplists:delete(timeout, Options1)],
   Query = #emo_query{q = [{<<"findandmodify">>, Collection1},
               {<<"query">>,     Selector1},
               {<<"update">>,    Update},
@@ -418,7 +418,7 @@ drop_collection(PoolId, Collection) -> drop_collection(PoolId, Collection, []).
 
 drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-  TQuery = create_query([], [{<<"drop">>, Collection}]),
+  TQuery = create_query(proplists:delete(timeout, Options), [{<<"drop">>, Collection}]),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
   case send_recv_command(drop_collection, "$cmd", Query, [], Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)) of
@@ -437,7 +437,7 @@ drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
 get_collections(PoolId) -> get_collections(PoolId, []).
 get_collections(PoolId, Options) when is_atom(PoolId) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-  Query = create_query(Options, []),
+  Query = create_query(proplists:delete(timeout, Options), []),
   Packet = emongo_packet:do_query(Pool#pool.database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
   case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Pid, Pool#pool.req_id, Packet,  proplists:get_value(timeout, Options, ?TIMEOUT)) of
     #response{documents=Docs} ->
@@ -465,7 +465,7 @@ drop_database(PoolId, Options) ->
     %dropped db
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Selector = [{<<"dropDatabase">>, 1}],
-  TQuery = create_query([], Selector),
+  TQuery = create_query(proplists:delete(timeout, Options), Selector),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   DropPacket = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
   try
@@ -873,12 +873,12 @@ hex0(14) -> $e;
 hex0(15) -> $f;
 hex0(I) ->  $0 + I.
 
-sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1) ->
+sync_command(Command, Collection, Selector, Options, {Pid, Pool}, Packet1, Timeout) ->
   Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
   Packet2 = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
                                    Query1),
   Resp = try
-    emongo_conn:send_sync(Pid, Pool#pool.req_id, Packet1, Packet2, ?TIMEOUT)
+    emongo_conn:send_sync(Pid, Pool#pool.req_id, Packet1, Packet2, Timeout)
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end,
