@@ -75,8 +75,8 @@ test_timing() ->
 
 test_drop_collection() ->
   ?OUT("Testing collection drop", []),
-    ok = emongo:drop_collection(?POOL, "test"),
-    false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
+  ok = emongo:drop_collection(?POOL, "test"),
+  false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
 
 test_drop_database() ->
   ?OUT("Testing databsae drop", []),

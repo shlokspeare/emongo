@@ -26,10 +26,10 @@
 
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/7, add_pool/9, remove_pool/1,
+         pools/0, add_pool/5, add_pool/6, add_pool/8, add_pool/10, remove_pool/1,
          queue_lengths/0,
          register_collections_to_databases/2,
-         find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
+         find/4, find_all/2, find_all/3, find_all/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
          update_all_sync/5,
@@ -90,18 +90,27 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
                                             database = DefaultDatabase,
                                             size     = Size}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout) ->
+  gen_server:call(?MODULE, {add_pool, #pool{id          = PoolId,
+                                            host        = Host,
+                                            port        = Port,
+                                            database    = DefaultDatabase,
+                                            size        = Size,
+                                            def_timeout = DefTimeout}}, infinity).
+
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout, UserIn, PassIn) ->
   User = to_binary(UserIn),
   Pass = to_binary(PassIn),
-  gen_server:call(?MODULE, {add_pool, #pool{id        = PoolId,
-                                            host      = Host,
-                                            port      = Port,
-                                            database  = DefaultDatabase,
-                                            size      = Size,
-                                            user      = User,
-                                            pass_hash = pass_hash(User, Pass)}}, infinity).
+  gen_server:call(?MODULE, {add_pool, #pool{id          = PoolId,
+                                            host        = Host,
+                                            port        = Port,
+                                            database    = DefaultDatabase,
+                                            size        = Size,
+                                            def_timeout = DefTimeout,
+                                            user        = User,
+                                            pass_hash   = pass_hash(User, Pass)}}, infinity).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn, MaxPipelineDepth, SocketOptions) ->
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout, UserIn, PassIn, MaxPipelineDepth, SocketOptions) ->
   User = to_binary(UserIn),
   Pass = to_binary(PassIn),
   gen_server:call(?MODULE, {add_pool, #pool{id                 = PoolId,
@@ -110,6 +119,7 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, UserIn, PassIn, MaxPipelineD
                                             database           = DefaultDatabase,
                                             size               = Size,
                                             user               = User,
+                                            def_timeout        = DefTimeout,
                                             pass_hash          = pass_hash(User, Pass),
                                             max_pipeline_depth = MaxPipelineDepth,
                                             socket_options     = SocketOptions}}, infinity).
@@ -160,8 +170,7 @@ find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
   Query = create_query(Options, Selector),
   Packet = emongo_packet:do_query(get_database(Pool, Collection), Collection,
                                   Pool#pool.req_id, Query),
-  Resp = send_recv_command(find, Collection, Selector, Options, Conn, Pool#pool.req_id, Packet,
-                           proplists:get_value(timeout, Options, ?TIMEOUT)),
+  Resp = send_recv_command(find, Collection, Selector, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
     true -> Resp;
     false -> Resp#response.documents
@@ -171,10 +180,10 @@ find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
 % find_all
 %------------------------------------------------------------------------------
 find_all(PoolId, Collection) ->
-  find_all(PoolId, Collection, [], [{timeout, ?TIMEOUT}]).
+  find_all(PoolId, Collection, [], []).
 
 find_all(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
-  find_all(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]).
+  find_all(PoolId, Collection, Selector, []).
 
 find_all(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
                                                      is_list(Options) ->
@@ -190,7 +199,7 @@ find_all(_PoolId, _Collection, _Selector, Options, Resp)
 
 find_all(PoolId, Collection, Selector, Options, Resp)
     when is_record(Resp, response) ->
-  Resp1 = get_more(PoolId, Collection, Resp#response.cursor_id, proplists:get_value(timeout, Options, ?TIMEOUT)),
+  Resp1 = get_more(PoolId, Collection, Resp#response.cursor_id, 0, Options),
   Documents = lists:append(Resp#response.documents, Resp1#response.documents),
   find_all(PoolId, Collection, Selector, Options, Resp1#response{documents=Documents}).
 
@@ -198,7 +207,7 @@ find_all(PoolId, Collection, Selector, Options, Resp)
 % find_one
 %------------------------------------------------------------------------------
 find_one(PoolId, Collection, Selector) when ?IS_DOCUMENT(Selector) ->
-  find_one(PoolId, Collection, Selector, [{timeout, ?TIMEOUT}]).
+  find_one(PoolId, Collection, Selector, []).
 
 find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
                                                      is_list(Options) ->
@@ -208,16 +217,11 @@ find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
 %------------------------------------------------------------------------------
 % get_more
 %------------------------------------------------------------------------------
-get_more(PoolId, Collection, CursorID, Timeout) ->
-  get_more(PoolId, Collection, CursorID, 0, Timeout).
-
-get_more(PoolId, Collection, CursorID, NumToReturn, Timeout) ->
+get_more(PoolId, Collection, CursorID, NumToReturn, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:get_more(get_database(Pool, Collection), Collection,
                                   Pool#pool.req_id, NumToReturn, CursorID),
-  send_recv_command(get_more, Collection, CursorID,
-                    {num_to_return, NumToReturn}, Conn, Pool#pool.req_id, Packet,
-                    Timeout).
+  send_recv_command(get_more, Collection, CursorID, [{num_to_return, NumToReturn} | Options], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % kill_cursors
@@ -228,8 +232,7 @@ kill_cursors(PoolId, CursorID) when is_integer(CursorID) ->
 kill_cursors(PoolId, CursorIDs) when is_list(CursorIDs) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:kill_cursors(Pool#pool.req_id, CursorIDs),
-  send_command(kill_cursors, undefined, CursorIDs, undefined, Conn,
-               Pool#pool.req_id, Packet).
+  send_command(kill_cursors, undefined, CursorIDs, [], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % insert
@@ -241,8 +244,7 @@ insert(PoolId, Collection, Documents) when ?IS_LIST_OF_DOCUMENTS(Documents) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:insert(get_database(Pool, Collection), Collection,
                                 Pool#pool.req_id, Documents),
-  send_command(insert, Collection, undefined, undefined, Conn, Pool#pool.req_id,
-               Packet).
+  send_command(insert, Collection, undefined, [], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % insert_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -259,8 +261,7 @@ insert_sync(PoolId, Collection, DocumentsIn, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:insert(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id, Documents),
-  sync_command(insert_sync, Collection, undefined, Options, {Conn, Pool},
-               Packet1).
+  sync_command(insert_sync, Collection, undefined, Options, Conn, Pool, Packet1).
 
 %------------------------------------------------------------------------------
 % update
@@ -275,8 +276,7 @@ update(PoolId, Collection, Selector, Document, Upsert)
   Packet = emongo_packet:update(get_database(Pool, Collection), Collection,
                                 Pool#pool.req_id, Upsert, false, Selector,
                                 Document),
-  send_command(update, Collection, Selector, {upsert, Upsert}, Conn,
-               Pool#pool.req_id, Packet).
+  send_command(update, Collection, Selector, [{upsert, Upsert}], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % update_all
@@ -287,8 +287,7 @@ update_all(PoolId, Collection, Selector, Document)
   Packet = emongo_packet:update(get_database(Pool, Collection), Collection,
                                 Pool#pool.req_id, false, true, Selector,
                                 Document),
-  send_command(update_all, Collection, Selector, undefined, Conn,
-               Pool#pool.req_id, Packet).
+  send_command(update_all, Collection, Selector, [], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % update_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -313,8 +312,7 @@ update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
     true -> Options;
     _    -> [check_match_found | Options]
   end,
-  sync_command(update_sync, Collection, Selector, Options1, {Conn, Pool},
-               Packet1).
+  sync_command(update_sync, Collection, Selector, Options1, Conn, Pool, Packet1).
 
 %------------------------------------------------------------------------------
 % update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -332,8 +330,7 @@ update_all_sync(PoolId, Collection, Selector, Document, Options)
   % We could check <<"n">> as the update_sync(...) functions do, but
   % update_all_sync(...) isn't targeting a specific number of documents, so 0
   % updates is legitimate.
-  sync_command(update_all_sync, Collection, Selector, Options, {Conn, Pool},
-               Packet1).
+  sync_command(update_all_sync, Collection, Selector, Options, Conn, Pool, Packet1).
 
 %------------------------------------------------------------------------------
 % delete
@@ -345,8 +342,7 @@ delete(PoolId, Collection, Selector) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:delete(get_database(Pool, Collection), Collection,
                                 Pool#pool.req_id, transform_selector(Selector)),
-  send_command(delete, Collection, Selector, undefined, Conn, Pool#pool.req_id,
-               Packet).
+  send_command(delete, Collection, Selector, [], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -364,8 +360,7 @@ delete_sync(PoolId, Collection, Selector, Options) ->
   Packet1 = emongo_packet:delete(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id,
                                  transform_selector(Selector)),
-  sync_command(delete_sync, Collection, Selector, [check_match_found | Options],
-               {Conn, Pool}, Packet1).
+  sync_command(delete_sync, Collection, Selector, [check_match_found | Options], Conn, Pool, Packet1).
 
 %------------------------------------------------------------------------------
 % ensure index
@@ -374,8 +369,7 @@ ensure_index(PoolId, Collection, Keys, Unique) when ?IS_DOCUMENT(Keys)->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:ensure_index(get_database(Pool, Collection), Collection,
                                       Pool#pool.req_id, Keys, Unique),
-  send_command(ensure_index, Collection, Keys, undefined, Conn, Pool#pool.req_id,
-               Packet).
+  send_command(ensure_index, Collection, Keys, [], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % count
@@ -393,8 +387,7 @@ count(PoolId, Collection, Selector, OptionsIn) ->
                        Selector),
   Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id,
                                 Query),
-  case send_recv_command(count, Collection, Selector, Options, Conn,
-                         Pool#pool.req_id, Packet, ?TIMEOUT) of
+  case send_recv_command(count, Collection, Selector, Options, Conn, Pool, Packet) of
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"n">>, Doc, undefined) of
         undefined -> undefined;
@@ -415,8 +408,7 @@ aggregate(PoolId, Collection, Pipeline, OptionsIn) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Query = create_query([{<<"pipeline">>, {array, Pipeline } },{<<"aggregate">>, Collection},{limit,1} | Options], []),
   Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
-  case send_recv_command(aggregate, Collection, Pipeline, Options, Conn,
-                         Pool#pool.req_id, Packet, ?TIMEOUT) of
+  case send_recv_command(aggregate, Collection, Pipeline, Options, Conn, Pool, Packet) of
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"ok">>, Doc, undefined) of
         undefined -> undefined;
@@ -448,9 +440,7 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
              limit = 1},
   Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id,
                   Query),
-  Resp = send_recv_command(find_and_modify, Collection, Selector, Options, Conn,
-                           Pool#pool.req_id, Packet,
-                           proplists:get_value(timeout, Options, ?TIMEOUT)),
+  Resp = send_recv_command(find_and_modify, Collection, Selector, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
     true -> Resp;
     false -> Resp#response.documents
@@ -466,8 +456,7 @@ drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   TQuery = create_query([], [{<<"drop">>, Collection}]),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
-  case send_recv_command(drop_collection, "$cmd", Query, [], Conn, Pool#pool.req_id, Packet,
-                         proplists:get_value(timeout, Options, ?TIMEOUT)) of
+  case send_recv_command(drop_collection, "$cmd", Query, Options, Conn, Pool, Packet) of
     #response{documents=[Res]} ->
         case lists:keyfind(<<"ok">>, 1, Res) of
             {<<"ok">>, 1.0} -> ok;
@@ -487,8 +476,7 @@ get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
   Query = create_query(Options, []),
   Database = to_binary(get_database(Pool, undefined)),
   Packet = emongo_packet:do_query(Database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
-  Timeout = proplists:get_value(timeout, Options, ?TIMEOUT),
-  case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Conn, Pool#pool.req_id, Packet, Timeout) of
+  case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Conn, Pool, Packet) of
     #response{documents=Docs} ->
         DatabaseForSplit = <<Database/binary, ".">>,
         lists:foldl(fun(Doc, Accum) ->
@@ -507,8 +495,7 @@ run_command(PoolId, Command, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Query = #emo_query{q = Command},
   Packet = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
-  Resp = send_recv_command(command, undefined, undefined, undefined, Conn, Pool#pool.req_id, Packet,
-                           proplists:get_value(timeout, Options, ?TIMEOUT)),
+  Resp = send_recv_command(command, "$cmd", Command, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
     true -> Resp;
     false -> Resp#response.documents
@@ -541,7 +528,7 @@ drop_database(PoolId, Options) ->
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   DropPacket = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
   try
-    case emongo_conn:send_recv(Conn, Pool#pool.req_id, DropPacket, proplists:get_value(timeout, Options, ?TIMEOUT)) of
+    case send_recv_command(drop_database, undefined, Selector, Options, Conn, Pool, DropPacket) of
         #response{documents=[Res]} ->
             case lists:keyfind(<<"ok">>, 1, Res) of
                 {<<"ok">>, 1.0} -> ok;
@@ -760,20 +747,20 @@ do_auth(Conn, Pool) ->
   do_auth(UniqueDBs, Conn, Pool).
 
 do_auth([], _Conn, Pool) -> Pool;
-do_auth([DB | Others], Conn, #pool{user = User, pass_hash = PassHash, req_id = ReqId} = Pool) ->
-  Nonce = case getnonce(Conn, DB, ReqId) of
+do_auth([DB | Others], Conn, #pool{user = User, pass_hash = PassHash} = Pool) ->
+  Nonce = case getnonce(Conn, DB, Pool) of
     error -> throw(emongo_getnonce);
     N     -> N
   end,
   Digest = emongo:dec2hex(erlang:md5(<<Nonce/binary, User/binary, PassHash/binary>>)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
-  authorize_conn_for_db(DB, Pool#pool.req_id, Query, Conn),
+  authorize_conn_for_db(DB, Pool, Query, Conn),
   do_auth(Others, Conn, Pool#pool{req_id = Pool#pool.req_id + 1}).
 
-authorize_conn_for_db(DB, ReqId, Query, Conn) ->
-  Packet = emongo_packet:do_query(DB, "$cmd", ReqId, Query),
-  Resp = send_recv_command(do_auth, undefined, undefined, undefined, Conn, ReqId, Packet, ?TIMEOUT),
+authorize_conn_for_db(DB, Pool, Query, Conn) ->
+  Packet = emongo_packet:do_query(DB, "$cmd", Pool#pool.req_id, Query),
+  Resp = send_recv_command(do_auth, "$cmd", undefined, [], Conn, Pool, Packet),
   [Res] = Resp#response.documents,
   case lists:keyfind(<<"ok">>, 1, Res) of
     {<<"ok">>, 1.0} -> ok;
@@ -786,11 +773,10 @@ authorize_conn_for_db(DB, ReqId, Query, Conn) ->
       end
   end.
 
-getnonce(Conn, DB, ReqId) ->
+getnonce(Conn, DB, Pool) ->
   Query1 = #emo_query{q=[{<<"getnonce">>, 1}], limit=1},
-  Packet = emongo_packet:do_query(DB, "$cmd", ReqId, Query1),
-  Resp1 = send_recv_command(getnonce, undefined, undefined, undefined, Conn,
-                            ReqId, Packet, ?TIMEOUT),
+  Packet = emongo_packet:do_query(DB, "$cmd", Pool#pool.req_id, Query1),
+  Resp1 = send_recv_command(getnonce, "$cmd", undefined, [], Conn, Pool, Packet),
   case lists:keyfind(<<"nonce">>, 1, lists:nth(1, Resp1#response.documents)) of
     false                -> error;
     {<<"nonce">>, Nonce} -> Nonce
@@ -960,14 +946,15 @@ hex0(14) -> $e;
 hex0(15) -> $f;
 hex0(I)  -> $0 + I.
 
-sync_command(Command, Collection, Selector, Options, {Conn, Pool}, Packet1) ->
+sync_command(Command, Collection, Selector, Options, Conn, Pool, Packet1) ->
   % When this connection was requested, two request ids were allocated, so using req_id + 1 is safe.
   GetLastErrorReqId = Pool#pool.req_id + 1,
   Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
   Packet2 = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", GetLastErrorReqId, Query1),
   Resp = try
-    time_call({Command, Collection, Selector, Options},
-              fun() -> emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, ?TIMEOUT) end)
+    time_call({Command, Collection, Selector, Options}, fun() ->
+      emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, get_timeout(Options, Pool))
+    end)
   catch _:{emongo_conn_error, Error} ->
     throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end,
@@ -976,21 +963,22 @@ sync_command(Command, Collection, Selector, Options, {Conn, Pool}, Packet1) ->
     false -> get_sync_result(Resp, lists:member(check_match_found, Options))
   end.
 
-send_recv_command(Command, Collection, Selector, ExtraInfo, Conn, ReqID, Packet,
-                  Timeout) ->
+send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
   try
-    time_call({Command, Collection, Selector, ExtraInfo},
-              fun() -> emongo_conn:send_recv(Conn, ReqID, Packet, Timeout) end)
+    time_call({Command, Collection, Selector, Options}, fun() ->
+      emongo_conn:send_recv(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
+    end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end.
 
-send_command(Command, Collection, Selector, ExtraInfo, Conn, ReqID, Packet) ->
+send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
   try
-    time_call({Command, Collection, Selector, ExtraInfo},
-              fun() -> emongo_conn:send(Conn, ReqID, Packet) end)
+    time_call({Command, Collection, Selector, Options}, fun() ->
+      emongo_conn:send(Conn, Pool#pool.req_id, Packet)
+    end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, ExtraInfo})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
   end.
 
 % TODO: Include selector in emongo_error messages.
@@ -1039,6 +1027,8 @@ time_call({Command, Collection, Selector, _Options}, Fun) ->
     {exception, C, E, Stacktrace} -> erlang:raise(C, E, Stacktrace);
     _                             -> Res
   end.
+
+get_timeout(Options, Pool) -> proplists:get_value(timeout, Options, Pool#pool.def_timeout).
 
 to_binary(undefined)           -> undefined;
 to_binary(V) when is_binary(V) -> V;
