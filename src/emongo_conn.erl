@@ -83,6 +83,14 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
         _NS = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>});
       {emongo_recv_timeout, FromRef, ReqId} ->
         gen:reply(FromRef, ok),
+        % If the message related to this request is still in the mailbox waiting to be sent (when CanSend is true), go
+        % ahead and clear it out (without regard for how CanSend is set).
+        receive
+          {emongo_conn_send,      _FromRef, {ReqId, _}}    -> ok;
+          {emongo_conn_send_sync, _FromRef, {ReqId, _, _}} -> ok;
+          {emongo_conn_send_recv, _FromRef, {ReqId, _}}    -> ok
+        after 0 -> ok
+        end,
         State#state{dict = dict:erase(ReqId, Dict)};
       {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
       {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
