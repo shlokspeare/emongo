@@ -949,19 +949,24 @@ hex0(I)  -> $0 + I.
 sync_command(Command, Collection, Selector, Options, Conn, Pool, Packet1) ->
   % When this connection was requested, two request ids were allocated, so using req_id + 1 is safe.
   GetLastErrorReqId = Pool#pool.req_id + 1,
-  Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
+  Query1 = #emo_query{q=[{<<"getlasterror">>, 1}, {<<"w">>, ?W_GETLASTERROR}, {<<"wtimeout">>, ?WTIMEOUT_GETLASTERROR}], limit=1},
   Packet2 = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", GetLastErrorReqId, Query1),
   Resp = try
     time_call({Command, Collection, Selector, Options}, fun() ->
       emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end,
-  case lists:member(response_options, Options) of
-    true  -> Resp;
-    false -> get_sync_result(Resp, lists:member(check_match_found, Options))
-  end.
+  try 
+    case lists:member(response_options, Options) of
+      true  -> Resp;
+      false -> get_sync_result(Resp, lists:member(check_match_found, Options))
+    end
+  catch _:{emongo_conn_error, db_timeout} ->
+    throw({emongo_conn_error, db_timeout, Command, Collection, Selector, [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
+  end
+.
 
 send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
   try
@@ -969,7 +974,7 @@ send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send_recv(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end.
 
 send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -978,16 +983,17 @@ send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send(Conn, Pool#pool.req_id, Packet)
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end.
 
 % TODO: Include selector in emongo_error messages.
 
 get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
   case lists:keyfind(<<"err">>, 1, Doc) of
-    {_, undefined} -> check_match_found(Doc, CheckMatchFound);
-    {_, Msg}       -> throw({emongo_error, Msg});
-    _              -> throw({emongo_error, {invalid_error_message, Doc}})
+    {_, undefined}     -> check_match_found(Doc, CheckMatchFound);
+    {_, <<"timeout">>} -> throw({emongo_conn_error, db_timeout});
+    {_, Msg}           -> throw({emongo_error, Msg});
+    _                  -> throw({emongo_error, {invalid_error_message, Doc}})
   end;
 get_sync_result(Resp, _CheckMatchFound) ->
   throw({emongo_error, {invalid_response, Resp}}).

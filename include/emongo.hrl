@@ -1,6 +1,8 @@
 -include_lib("emongo_public.hrl").
 
 -define(TIMEOUT, 5000).
+-define(WTIMEOUT_GETLASTERROR, 4000).
+-define(W_GETLASTERROR, 1).
 -define(OP_REPLY, 1).
 -define(OP_MSG, 1000).
 -define(OP_UPDATE, 2001).

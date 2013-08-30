@@ -62,7 +62,7 @@ init_loop(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
   loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth}).
 
 loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
-  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) =< MaxPipelineDepth),
+  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) < MaxPipelineDepth),
   NewState = try
     _NewState = receive
       % FromRef = {From, Mref}
@@ -127,12 +127,14 @@ gen_call(Pid, Label, ReqId, Request, Timeout) ->
       try
         gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
       catch
-        _:{'EXIT', timeout} ->
+        exit:timeout ->
           % If a timeout occurred while trying to communicate with the
           % connection, something is really backed up.  However, if this
           % happens after a connection goes down, it's expected.
           exit({emongo_conn_error, overloaded});
-        _:E -> E % Let the original error bubble up.
+        exit:E -> exit(E);   % Let the original error bubble up.
+        error:E -> error(E); % Let the original error bubble up.
+        throw:E -> throw(E)  % Let the original error bubble up.
       end,
       exit({emongo_conn_error, timeout});
     Error -> exit({emongo_conn_error, Error})
