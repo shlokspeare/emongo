@@ -13,7 +13,7 @@
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
-  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE), % "test_username", "test_password"),
+  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE),
   emongo:delete_sync(?POOL, ?COLL),
   ok.
 

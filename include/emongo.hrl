@@ -1,8 +1,6 @@
 -include_lib("emongo_public.hrl").
 
--define(TIMEOUT, 5000).
--define(WTIMEOUT_GETLASTERROR, 4000).
--define(W_GETLASTERROR, 1).
+-define(CONN_TIMEOUT, 5000).
 -define(OP_REPLY, 1).
 -define(OP_MSG, 1000).
 -define(OP_UPDATE, 2001).
@@ -33,7 +31,19 @@
 		)
 	))).
 
--record(pool, {id, host, port, database, size=1, user, pass_hash, max_pipeline_depth = 0, socket_options = [],
-               conns=queue:new(), req_id=1, def_timeout = ?TIMEOUT}).
+-record(pool, {id,
+               host,
+               port,
+               database,
+               size                  = 1,
+               user                  = undefined,
+               pass_hash             = undefined,
+               max_pipeline_depth    = 0,
+               socket_options        = [],
+               conns                 = queue:new(),
+               req_id                = 1,
+               timeout               = 5000,
+               write_concern         = 1,
+               write_concern_timeout = 4000}).
 -record(header, {message_length, request_id, response_to, op_code}).
 -record(emo_query, {opts=0, offset=0, limit=16#7FFFFFFF, q=[], field_selector=[]}).
