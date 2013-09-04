@@ -26,7 +26,7 @@
 
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([oid/0, oid_generation_time/1,
-         pools/0, add_pool/5, add_pool/6, add_pool/8, add_pool/10, remove_pool/1,
+         pools/0, add_pool/5, add_pool/6, remove_pool/1,
          queue_lengths/0,
          register_collections_to_databases/2,
          find/4, find_all/2, find_all/3, find_all/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
@@ -84,45 +84,39 @@ oid_generation_time(Oid) when is_binary(Oid) andalso size(Oid) =:= 12 ->
   UnixTime.
 
 add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
-  gen_server:call(?MODULE, {add_pool, #pool{id       = PoolId,
-                                            host     = Host,
-                                            port     = Port,
-                                            database = DefaultDatabase,
-                                            size     = Size}}, infinity).
+  add_pool(PoolId, Host, Port, DefaultDatabase, Size, []).
 
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout) ->
-  gen_server:call(?MODULE, {add_pool, #pool{id          = PoolId,
-                                            host        = Host,
-                                            port        = Port,
-                                            database    = DefaultDatabase,
-                                            size        = Size,
-                                            def_timeout = DefTimeout}}, infinity).
-
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout, UserIn, PassIn) ->
-  User = to_binary(UserIn),
-  Pass = to_binary(PassIn),
-  gen_server:call(?MODULE, {add_pool, #pool{id          = PoolId,
-                                            host        = Host,
-                                            port        = Port,
-                                            database    = DefaultDatabase,
-                                            size        = Size,
-                                            def_timeout = DefTimeout,
-                                            user        = User,
-                                            pass_hash   = pass_hash(User, Pass)}}, infinity).
-
-add_pool(PoolId, Host, Port, DefaultDatabase, Size, DefTimeout, UserIn, PassIn, MaxPipelineDepth, SocketOptions) ->
-  User = to_binary(UserIn),
-  Pass = to_binary(PassIn),
-  gen_server:call(?MODULE, {add_pool, #pool{id                 = PoolId,
-                                            host               = Host,
-                                            port               = Port,
-                                            database           = DefaultDatabase,
-                                            size               = Size,
-                                            user               = User,
-                                            def_timeout        = DefTimeout,
-                                            pass_hash          = pass_hash(User, Pass),
-                                            max_pipeline_depth = MaxPipelineDepth,
-                                            socket_options     = SocketOptions}}, infinity).
+% Options = [option()]
+% option() =
+%   {timeout,            integer()} % milliseconds
+%   {user,               string()}
+%   {password,           string()}
+%   {max_pipeline_depth, int()}
+%   {socket_options,     [gen_tcp:connect_option()]} % http://www.erlang.org/doc/man/gen_tcp.html#type-connect_option
+%   {write_concern,      int()}
+%   {write_concern_timeout, integer()} % milliseconds
+add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
+  Def = #pool{},
+  Timeout             = proplists:get_value(timeout,               Options, Def#pool.timeout),
+  User      = to_binary(proplists:get_value(user,                  Options, Def#pool.user)),
+  Password  = to_binary(proplists:get_value(password,              Options, undefined)),
+  MaxPipelineDepth    = proplists:get_value(max_pipeline_depth,    Options, Def#pool.max_pipeline_depth),
+  SocketOptions       = proplists:get_value(socket_options,        Options, Def#pool.socket_options),
+  WriteConcern        = proplists:get_value(write_concern,         Options, Def#pool.write_concern),
+  WriteConcernTimeout = proplists:get_value(write_concern_timeout, Options, Def#pool.write_concern_timeout),
+  Pool = #pool{id                    = PoolId,
+               host                  = Host,
+               port                  = Port,
+               database              = DefaultDatabase,
+               size                  = Size,
+               timeout               = Timeout,
+               user                  = User,
+               pass_hash             = pass_hash(User, Password),
+               max_pipeline_depth    = MaxPipelineDepth,
+               socket_options        = SocketOptions,
+               write_concern         = WriteConcern,
+               write_concern_timeout = WriteConcernTimeout},
+  gen_server:call(?MODULE, {add_pool, Pool}, infinity).
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
@@ -248,6 +242,7 @@ insert(PoolId, Collection, Documents) when ?IS_LIST_OF_DOCUMENTS(Documents) ->
 
 %------------------------------------------------------------------------------
 % insert_sync that runs db.$cmd.findOne({getlasterror: 1});
+% Options can include {write_concern, (string|integer)}, {write_concern_timeout, Milliseconds}
 %------------------------------------------------------------------------------
 insert_sync(PoolId, Collection, Documents) ->
   insert_sync(PoolId, Collection, Documents, []).
@@ -293,6 +288,7 @@ update_all(PoolId, Collection, Selector, Document)
 % update_sync that runs db.$cmd.findOne({getlasterror: 1});
 % If no documents match the input Selector, {emongo_no_match_found, DbResponse}
 % will be returned.
+% Options can include {write_concern, (string|integer)}, {write_concern_timeout, Milliseconds}
 %------------------------------------------------------------------------------
 update_sync(PoolId, Collection, Selector, Document)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
@@ -316,6 +312,7 @@ update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
 
 %------------------------------------------------------------------------------
 % update_all_sync that runs db.$cmd.findOne({getlasterror: 1});
+% Options can include {write_concern, (string|integer)}, {write_concern_timeout, Milliseconds}
 %------------------------------------------------------------------------------
 update_all_sync(PoolId, Collection, Selector, Document)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
@@ -348,6 +345,7 @@ delete(PoolId, Collection, Selector) ->
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
 % If no documents match the input Selector, {emongo_no_match_found, DbResponse}
 % will be returned.
+% Options can include {write_concern, (string|integer)}, {write_concern_timeout, Milliseconds}
 %------------------------------------------------------------------------------
 delete_sync(PoolId, Collection) ->
   delete_sync(PoolId, Collection, []).
@@ -845,7 +843,8 @@ finalize_emo_query([], EmoQuery) ->
 finalize_emo_query(Selector, #emo_query{q = Q} = EmoQuery) ->
   EmoQuery#emo_query{q = Q ++ [{<<"query">>, Selector}]}.
 
-transform_options([], EmoQuery) -> EmoQuery;
+transform_options([], EmoQuery) ->
+  EmoQuery;
 transform_options([{limit, Limit} | Rest], EmoQuery) ->
   NewEmoQuery = EmoQuery#emo_query{limit=Limit},
   transform_options(Rest, NewEmoQuery);
@@ -861,15 +860,17 @@ transform_options([{orderby, OrderbyIn} | Rest],
 transform_options([{fields, Fields} | Rest], EmoQuery) ->
   NewEmoQuery = EmoQuery#emo_query{field_selector=convert_fields(Fields)},
   transform_options(Rest, NewEmoQuery);
-transform_options([Opt | Rest], #emo_query{opts = OptsIn} = EmoQuery)
-    when is_integer(Opt) ->
+transform_options([Opt | Rest], #emo_query{opts = OptsIn} = EmoQuery) when is_integer(Opt) ->
   NewEmoQuery = EmoQuery#emo_query{opts = Opt bor OptsIn},
   transform_options(Rest, NewEmoQuery);
 transform_options([{<<_/binary>>, _} = Option | Rest],
                   #emo_query{q = Query} = EmoQuery) ->
   NewEmoQuery = EmoQuery#emo_query{q = [Option | Query]},
   transform_options(Rest, NewEmoQuery);
-transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout ->
+transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout;
+                                                       % The write-concern options are handled in sync_command()
+                                                       Ignore == write_concern;
+                                                       Ignore == write_concern_timeout ->
   transform_options(Rest, EmoQuery);
 transform_options([Ignore | Rest], EmoQuery) when Ignore == check_match_found;
                                                   Ignore == response_options;
@@ -948,19 +949,24 @@ hex0(I)  -> $0 + I.
 
 sync_command(Command, Collection, Selector, Options, Conn, Pool, Packet1) ->
   % When this connection was requested, two request ids were allocated, so using req_id + 1 is safe.
-  GetLastErrorReqId = Pool#pool.req_id + 1,
-  Query1 = #emo_query{q=[{<<"getlasterror">>, 1}], limit=1},
+  GetLastErrorReqId   = Pool#pool.req_id + 1,
+  Timeout             = get_timeout(Options, Pool),
+  WriteConcern        = proplists:get_value(write_concern,         Options, Pool#pool.write_concern),
+  WriteConcernTimeout = proplists:get_value(write_concern_timeout, Options, Pool#pool.write_concern_timeout),
+  Query1 = #emo_query{q = [{<<"getlasterror">>, 1}, {<<"w">>, WriteConcern}, {<<"wtimeout">>, WriteConcernTimeout}],
+                      limit = 1},
   Packet2 = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", GetLastErrorReqId, Query1),
-  Resp = try
-    time_call({Command, Collection, Selector, Options}, fun() ->
-      emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, get_timeout(Options, Pool))
-    end)
+  try
+    Resp = time_call({Command, Collection, Selector, Options}, fun() ->
+      emongo_conn:send_sync(Conn, GetLastErrorReqId, Packet1, Packet2, Timeout)
+    end),
+    case lists:member(response_options, Options) of
+      true  -> Resp;
+      false -> get_sync_result(Resp, lists:member(check_match_found, Options))
+    end
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
-  end,
-  case lists:member(response_options, Options) of
-    true  -> Resp;
-    false -> get_sync_result(Resp, lists:member(check_match_found, Options))
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end.
 
 send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -969,25 +975,28 @@ send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send_recv(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end.
 
 send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
   try
     time_call({Command, Collection, Selector, Options}, fun() ->
-      emongo_conn:send(Conn, Pool#pool.req_id, Packet)
+      emongo_conn:send(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options})
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
   end.
 
 % TODO: Include selector in emongo_error messages.
 
 get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
   case lists:keyfind(<<"err">>, 1, Doc) of
-    {_, undefined} -> check_match_found(Doc, CheckMatchFound);
-    {_, Msg}       -> throw({emongo_error, Msg});
-    _              -> throw({emongo_error, {invalid_error_message, Doc}})
+    {_, undefined}     -> check_match_found(Doc, CheckMatchFound);
+    {_, <<"timeout">>} -> throw({emongo_conn_error, db_timeout});
+    {_, Msg}           -> throw({emongo_error, Msg});
+    _                  -> throw({emongo_error, {invalid_error_message, Doc}})
   end;
 get_sync_result(Resp, _CheckMatchFound) ->
   throw({emongo_error, {invalid_response, Resp}}).
@@ -1028,7 +1037,7 @@ time_call({Command, Collection, Selector, _Options}, Fun) ->
     _                             -> Res
   end.
 
-get_timeout(Options, Pool) -> proplists:get_value(timeout, Options, Pool#pool.def_timeout).
+get_timeout(Options, Pool) -> proplists:get_value(timeout, Options, Pool#pool.timeout).
 
 to_binary(undefined)           -> undefined;
 to_binary(V) when is_binary(V) -> V;

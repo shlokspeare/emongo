@@ -22,19 +22,20 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
 -include("emongo.hrl").
--export([start_link/5, stop/1, send/3, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
+-export([start_link/5, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
 -export([init_loop/5]).
 
 -record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0}).
 
 start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
-  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, SocketOptions], ?TIMEOUT).
+  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, SocketOptions],
+                                ?CONN_TIMEOUT).
 
 stop(Pid) ->
   Pid ! emongo_conn_close.
 
-send(Pid, ReqId, Packet) ->
-  gen_call(Pid, emongo_conn_send, ReqId, {ReqId, Packet}, ?TIMEOUT).
+send(Pid, ReqId, Packet, Timeout) ->
+  gen_call(Pid, emongo_conn_send, ReqId, {ReqId, Packet}, Timeout).
 
 send_sync(Pid, ReqId, Packet1, Packet2, Timeout) ->
   Resp = gen_call(Pid, emongo_conn_send_sync, ReqId,
@@ -62,7 +63,7 @@ init_loop(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
   loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth}).
 
 loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
-  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) =< MaxPipelineDepth),
+  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) < MaxPipelineDepth),
   NewState = try
     _NewState = receive
       % FromRef = {From, Mref}
@@ -113,29 +114,30 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
 
 open_socket(Host, Port, SocketOptions) ->
   case gen_tcp:connect(Host, Port, [binary, {active, true} | SocketOptions]) of
-    {ok, Sock} ->
-      Sock;
-    {error, Reason} ->
-      exit({emongo_failed_to_open_socket, Reason})
+    {ok, Sock}      -> Sock;
+    {error, Reason} -> exit({emongo_failed_to_open_socket, Reason})
   end.
 
 gen_call(Pid, Label, ReqId, Request, Timeout) ->
-  case catch gen:call(Pid, Label, Request, Timeout) of
-    {ok, Result} -> Result;
-    {'EXIT', timeout} ->
-      % Clear the ets table from the timed out call
-      try
-        gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
-      catch
-        _:{'EXIT', timeout} ->
-          % If a timeout occurred while trying to communicate with the
-          % connection, something is really backed up.  However, if this
-          % happens after a connection goes down, it's expected.
-          exit({emongo_conn_error, overloaded});
-        _:E -> E % Let the original error bubble up.
-      end,
-      exit({emongo_conn_error, timeout});
-    Error -> exit({emongo_conn_error, Error})
+  try
+    case gen:call(Pid, Label, Request, Timeout) of
+      {ok, Result} -> Result;
+      Error        -> exit({emongo_conn_error, Error})
+    end
+  catch exit:timeout ->
+    % TODO: If the response to the gen:call() above comes back right in this gap (i.e. before the request has been
+    % cleared from the connection Pid's dictionary), the reply could be sent to this Pid's mailbox and never removed.
+    try
+      % Tell the connection Pid that this call is timing out.
+      gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
+    catch
+      % If a timeout occurred while trying to communicate with the connection, something is really backed up.  However,
+      % if this happens after a connection goes down, it's expected.
+      exit:timeout -> exit({emongo_conn_error, overloaded});
+      % Any other error should not override the timeout we are already handling.
+      _:E          -> E
+    end,
+    exit({emongo_conn_error, timeout})
   end.
 
 process_bin(State = #state{dict = Dict, socket_data = Data}) ->
