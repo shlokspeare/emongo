@@ -75,7 +75,7 @@ encode_key_value(Key, {binary, SubType, Val}) when is_integer(SubType), is_binar
 encode_key_value(Key, {oid, HexString}) when is_list(HexString) ->
 	encode_key_value(Key, {oid, emongo:hex2dec(HexString)});
 
-encode_key_value(Key, {oid, OID}) when is_binary(OID) ->
+encode_key_value(Key, {oid, <<OID:12/binary>>}) ->
 	Key1 = encode_key(Key),
 	<<7, Key1/binary, 0, OID/binary>>;
 
