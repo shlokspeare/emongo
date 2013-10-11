@@ -1003,14 +1003,17 @@ get_sync_result(Resp, _CheckMatchFound) ->
 
 check_match_found(_Doc, false) -> ok;
 check_match_found(Doc, _) ->
-  case lists:keyfind(<<"n">>, 1, Doc) of
-    {_, 0} ->
-      case lists:keyfind(<<"updatedExisting">>, 1, Doc) of
-        {_, true} -> ok;
-        _         ->  {emongo_no_match_found, Doc}
-      end;
-    {_, _} -> ok;
-    false  -> throw({emongo_error, {invalid_response, Doc}})
+  % For some reason, "updatedExisting" isn't always in the response.  If it is there, use the value it returns.
+  % Otherwise, fall back on "n", which seems to always be there.
+  case lists:keyfind(<<"updatedExisting">>, 1, Doc) of
+    {_, true}  -> ok;
+    {_, false} -> {emongo_no_match_found, Doc};
+    _ ->
+      case lists:keyfind(<<"n">>, 1, Doc) of
+        {_, 0} -> {emongo_no_match_found, Doc};
+        {_, _} -> ok;
+        false  -> throw({emongo_error, {invalid_response, Doc}})
+      end
   end.
 
 time_call({Command, Collection, Selector, _Options}, Fun) ->
