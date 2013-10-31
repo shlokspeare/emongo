@@ -129,13 +129,12 @@ encode_key_value(Key, Val) when is_integer(Val) ->
 	Key1 = encode_key(Key),
 	<<18, Key1/binary, 0, Val:64/little-signed>>;
 
-% Empty lists are ambiguous.  They could be an empty string, an empty array, or an empty sub-document.  Therefore, allow
-% empty lists to fall through and generate an error.  If we want to default to one of these types, we could do it with a
-% special clause such as this:
-%encode_key_value(Key, []) ->
-%  ?WARN("Encoding an empty list ([]) as a string.  This list should probably be clarified as an object ({struct, []}), "
-%        "array ({array, []}), or an empty string (<<>>).", []),
-%  encode_key_value(Key, <<>>);
+% Empty lists are ambiguous.  They could be an empty string, an empty array, or an empty sub-document.  This code
+% defaults an empty list to an empty string.
+encode_key_value(Key, []) ->
+  ?WARN("Encoding an empty list ([]) as a string.  This list should probably be clarified as an object ({struct, []}), "
+        "array ({array, []}), or an empty string (<<>>).", []),
+  encode_key_value(Key, <<>>);
 encode_key_value(Key, Val) ->
 	exit({emongo_bson_encode_error, Key, Val}).
 
