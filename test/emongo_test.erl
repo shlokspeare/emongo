@@ -32,6 +32,8 @@ run_test_() ->
       fun test_drop_collection/0,
       fun test_drop_database/0,
       fun test_upsert/0, % rerun upsert to make sure we can still do our work
+      fun test_empty_sel_with_orderby/0,
+      fun test_count/0,
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
@@ -79,8 +81,31 @@ test_drop_collection() ->
   false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
 
 test_drop_database() ->
-  ?OUT("Testing databsae drop", []),
+  ?OUT("Testing database drop", []),
   ok = emongo:drop_database(?POOL).
+
+test_empty_sel_with_orderby() ->
+  ?OUT("Testing empty selector with orderby option", []),
+  emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 2}],
+                                    [{<<"a">>, 1}]]),
+  Res = emongo:find_all(?POOL, ?COLL, [], [{fields, [{<<"_id">>, 0}]}, {orderby, [{<<"a">>, 1}]}]),
+  ?assertEqual([[{<<"a">>, 1}],
+                [{<<"a">>, 2}]], Res),
+  emongo:delete_sync(?POOL, ?COLL, [{<<"a">>, [{<<"$in">>, [1, 2]}]}]),
+  ?assertEqual([], emongo:find_all(?POOL, ?COLL)),
+  ?OUT("Test passed", []).
+
+test_count() ->
+  ?OUT("Testing count", []),
+  emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 1}], [{<<"a">>, 2}], [{<<"a">>, 3}], [{<<"a">>, 4}], [{<<"a">>, 5}]]),
+  %?OUT("Resp = ~p", [emongo:count(?POOL, ?COLL, [{<<"$or">>, [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}],
+  %                                [response_options])]),
+  ?assertEqual(5, emongo:count(?POOL, ?COLL, [])),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"a">>, [{lte, 3}]}])),
+  ?assertEqual(2, emongo:count(?POOL, ?COLL, [{<<"a">>, [{gt,  3}]}])),
+  ?assertEqual(4, emongo:count(?POOL, ?COLL, [{<<"$or">>,  [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}])),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"$and">>, [[{<<"a">>, [{gte, 2}]}], [{<<"a">>, [{lte, 4}]}]]}])),
+  ?OUT("Test passed", []).
 
 test_performance() ->
   ?OUT("Testing performance.", []),

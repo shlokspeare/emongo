@@ -21,6 +21,7 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_bson).
+-include("emongo.hrl").
 -export([encode/1, decode/1]).
 -compile(export_all).
 
@@ -37,7 +38,8 @@ encode_key_value(Key, Val) when is_float(Val) ->
 	<<1, Key1/binary, 0, Val:64/little-signed-float>>;
 
 %% STRING
-encode_key_value(Key, Val) when is_binary(Val) orelse Val == [] orelse (is_list(Val) andalso length(Val) > 0 andalso is_integer(hd(Val))) ->
+encode_key_value(Key, Val) when is_binary(Val) orelse
+                                (is_list(Val) andalso length(Val) > 0 andalso is_integer(hd(Val))) ->
 	Key1 = encode_key(Key),
   Val1 = emongo:utf8_encode(Val),
   <<2, Key1/binary, 0, (byte_size(Val1)+1):32/little-signed, Val1/binary, 0:8>>;
@@ -59,7 +61,7 @@ encode_key_value(Key, {array, Val}) when is_list(Val) ->
 	Val1 = encode(lists:zip(lists:seq(0, length(Val)-1), Val)),
 	<<4, Key1/binary, 0, Val1/binary>>;
 
-encode_key_value(Key, Val) when is_list(Val) ->
+encode_key_value(Key, [_|_] = Val) ->
 	encode_key_value(Key, {array, Val});
 
 %% BINARY
@@ -127,6 +129,13 @@ encode_key_value(Key, Val) when is_integer(Val) ->
 	Key1 = encode_key(Key),
 	<<18, Key1/binary, 0, Val:64/little-signed>>;
 
+% Empty lists are ambiguous.  They could be an empty string, an empty array, or an empty sub-document.  Therefore, allow
+% empty lists to fall through and generate an error.  If we want to default to one of these types, we could do it with a
+% special clause such as this:
+%encode_key_value(Key, []) ->
+%  ?WARN("Encoding an empty list ([]) as a string.  This list should probably be clarified as an object ({struct, []}), "
+%        "array ({array, []}), or an empty string (<<>>).", []),
+%  encode_key_value(Key, <<>>);
 encode_key_value(Key, Val) ->
 	exit({emongo_bson_encode_error, Key, Val}).
 

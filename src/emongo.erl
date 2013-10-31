@@ -379,13 +379,14 @@ count(PoolId, Collection, Selector) ->
   count(PoolId, Collection, Selector, []).
 
 count(PoolId, Collection, Selector, OptionsIn) ->
-  Options = set_slave_ok(OptionsIn),
+  Options      = set_slave_ok(OptionsIn),
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Query = create_query([{<<"count">>, Collection}, {limit, 1} | Options],
-                       Selector),
-  Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id,
-                                Query),
-  case send_recv_command(count, Collection, Selector, Options, Conn, Pool, Packet) of
+  Query        = create_cmd(<<"count">>, Collection, Selector, [], 1, Options),
+  Packet       = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
+  Resp         = send_recv_command(count, Collection, Selector, Options, Conn, Pool, Packet),
+  RespOpts     = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"n">>, Doc, undefined) of
         undefined -> undefined;
@@ -402,15 +403,15 @@ aggregate(PoolId, Collection, Pipeline) ->
   aggregate(PoolId, Collection, Pipeline, []).
 
 aggregate(PoolId, Collection, Pipeline, OptionsIn) ->
-  Options = set_slave_ok(OptionsIn),
+  Options      = set_slave_ok(OptionsIn),
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Query = create_query([{<<"pipeline">>, {array, Pipeline } },{<<"aggregate">>, Collection},{limit,1} | Options], []),
-  Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
+  Query        = create_cmd(<<"aggregate">>, Collection, undefined, [{<<"pipeline">>, {array, Pipeline}}], 1, Options),
+  Packet       = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
   case send_recv_command(aggregate, Collection, Pipeline, Options, Conn, Pool, Packet) of
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"ok">>, Doc, undefined) of
         undefined -> undefined;
-        _     -> Doc
+        _         -> Doc
       end;
       _ -> undefined
   end.
@@ -424,23 +425,13 @@ find_and_modify(PoolId, Collection, Selector, Update) ->
 find_and_modify(PoolId, Collection, Selector, Update, Options)
   when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Update), is_list(Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Collection1 = to_binary(Collection),
-  Selector1 = transform_selector(Selector),
-  Fields = proplists:get_value(fields, Options, []),
-  FieldSelector = convert_fields(Fields),
-  Options1 = proplists:delete(fields, Options),
-  Options2 = [{to_binary(Opt), Val} || {Opt, Val} <- Options1],
-  Query = #emo_query{q = [{<<"findandmodify">>, Collection1},
-              {<<"query">>,     Selector1},
-              {<<"update">>,    Update},
-              {<<"fields">>,    FieldSelector}
-              | Options2],
-             limit = 1},
-  Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id,
-                  Query),
-  Resp = send_recv_command(find_and_modify, Collection, Selector, Options, Conn, Pool, Packet),
+  Query        = create_cmd(<<"findandmodify">>, Collection, Selector, [{<<"update">>, Update}], undefined,
+                            % We don't want to force the limit to 1, but want to default it to 1 if it's not in Options.
+                            [{limit, 1} | Options]),
+  Packet       = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
+  Resp         = send_recv_command(find_and_modify, Collection, Selector, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
-    true -> Resp;
+    true  -> Resp;
     false -> Resp#response.documents
   end.
 
@@ -831,17 +822,26 @@ utf8_encode(Value) ->
   end
   end.
 
+% create_cmd(Command, Collection, Selector, ExtraParams, ForcedLimit, Options)
+create_cmd(Command, Collection, undefined, ExtraParams, undefined, Options) ->
+  EmoQuery = transform_options(Options, #emo_query{}),
+  EmoQuery#emo_query{q = [{Command, Collection} | ExtraParams ++ EmoQuery#emo_query.q]};
+create_cmd(Command, Collection, Selector, ExtraParams, undefined, Options) ->
+  % For some reason, with this version of MongoDB, they use "query" with "$cmd" and "$query" for other selectors.
+  NewExtraParams = [{<<"query">>, {struct, transform_selector(Selector)}} | ExtraParams],
+  create_cmd(Command, Collection, undefined, NewExtraParams, undefined, Options);
+create_cmd(Command, Collection, Selector, ExtraParams, ForcedLimit, Options) ->
+  NewOptions = [{limit, ForcedLimit} | proplists:delete(limit, Options)],
+  create_cmd(Command, Collection, Selector, ExtraParams, undefined, NewOptions).
+
 create_query(Options, SelectorIn) ->
   Selector = transform_selector(SelectorIn),
   EmoQuery = transform_options(Options, #emo_query{}),
   finalize_emo_query(Selector, EmoQuery).
 
-finalize_emo_query(Selector, #emo_query{q = []} = EmoQuery) ->
-  EmoQuery#emo_query{q = Selector};
-finalize_emo_query([], EmoQuery) ->
-  EmoQuery;
-finalize_emo_query(Selector, #emo_query{q = Q} = EmoQuery) ->
-  EmoQuery#emo_query{q = Q ++ [{<<"query">>, Selector}]}.
+finalize_emo_query(Selector, #emo_query{q = []} = EmoQuery) -> EmoQuery#emo_query{q = Selector};
+finalize_emo_query(Selector, #emo_query{q = Q}  = EmoQuery) ->
+  EmoQuery#emo_query{q = [{<<"$query">>, {struct, Selector}} | Q]}.
 
 transform_options([], EmoQuery) ->
   EmoQuery;
@@ -853,28 +853,37 @@ transform_options([{offset, Offset} | Rest], EmoQuery) ->
   transform_options(Rest, NewEmoQuery);
 transform_options([{orderby, OrderbyIn} | Rest],
                   #emo_query{q = Query} = EmoQuery) ->
-  Orderby = {<<"orderby">>, [{Key, case Dir of desc -> -1; _ -> 1 end} ||
-                             {Key, Dir} <- OrderbyIn]},
+  Orderby = {<<"$orderby">>, {struct, [{Key, case Dir of desc -> -1; -1 -> -1; _ -> 1 end} ||
+                                       {Key, Dir} <- OrderbyIn]}},
   NewEmoQuery = EmoQuery#emo_query{q = [Orderby | Query]},
   transform_options(Rest, NewEmoQuery);
 transform_options([{fields, Fields} | Rest], EmoQuery) ->
   NewEmoQuery = EmoQuery#emo_query{field_selector=convert_fields(Fields)},
   transform_options(Rest, NewEmoQuery);
-transform_options([Opt | Rest], #emo_query{opts = OptsIn} = EmoQuery) when is_integer(Opt) ->
+transform_options([Opt | Rest], #emo_query{opts = OptsIn} = EmoQuery)
+    when is_integer(Opt) ->
   NewEmoQuery = EmoQuery#emo_query{opts = Opt bor OptsIn},
   transform_options(Rest, NewEmoQuery);
-transform_options([{<<_/binary>>, _} = Option | Rest],
-                  #emo_query{q = Query} = EmoQuery) ->
+transform_options([{<<_/binary>>, _} = Option | Rest], #emo_query{q = Query} = EmoQuery) ->
   NewEmoQuery = EmoQuery#emo_query{q = [Option | Query]},
   transform_options(Rest, NewEmoQuery);
-transform_options([{Ignore, _} | Rest], EmoQuery) when Ignore == timeout;
-                                                       % The write-concern options are handled in sync_command()
-                                                       Ignore == write_concern;
-                                                       Ignore == write_concern_timeout ->
+transform_options([{AllowedBinaries, Val} | Rest], #emo_query{q = Query} = EmoQuery)
+    when AllowedBinaries == new;
+         AllowedBinaries == sort;
+         AllowedBinaries == remove;
+         AllowedBinaries == upsert ->
+  NewEmoQuery = EmoQuery#emo_query{q = [{to_binary(AllowedBinaries), Val} | Query]},
+  transform_options(Rest, NewEmoQuery);
+transform_options([{Ignore, _} | Rest], EmoQuery)
+    when Ignore == timeout;
+         % The write-concern options are handled in sync_command()
+         Ignore == write_concern;
+         Ignore == write_concern_timeout ->
   transform_options(Rest, EmoQuery);
-transform_options([Ignore | Rest], EmoQuery) when Ignore == check_match_found;
-                                                  Ignore == response_options;
-                                                  Ignore == ?USE_PRIMARY ->
+transform_options([Ignore | Rest], EmoQuery)
+    when Ignore == check_match_found;
+         Ignore == response_options;
+         Ignore == ?USE_PRIMARY ->
   transform_options(Rest, EmoQuery);
 transform_options([Invalid | _Rest], _EmoQuery) ->
   throw({emongo_invalid_option, Invalid}).
