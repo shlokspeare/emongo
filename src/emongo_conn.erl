@@ -25,7 +25,10 @@
 -export([start_link/5, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
 -export([init_loop/5]).
 
--record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0}).
+% If this connection receives more than this many timeouts in a row, the connection will be closed and re-established.
+% 0 means that any timeout will trigger this connection to be reset.
+-define(MAX_CONSECUTIVE_TIMEOUTS, 0).
+-record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0, timeout_count = 0}).
 
 start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
   {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, SocketOptions],
@@ -81,7 +84,9 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
         ok = gen_tcp:send(Socket, Packet),
         State#state{dict = dict:append(ReqId, FromRef, Dict)};
       {tcp, _Socket, NewData} ->
-        _NS = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>});
+        ProcState = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>}),
+        % We are receiving data on this socket, so clear timeout_count.
+        ProcState#state{timeout_count = 0};
       {emongo_recv_timeout, FromRef, ReqId} ->
         gen:reply(FromRef, ok),
         % If the message related to this request is still in the mailbox waiting to be sent (when CanSend is true), go
@@ -92,7 +97,11 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
           {emongo_conn_send_recv, _FromRef, {ReqId, _}}    -> ok
         after 0 -> ok
         end,
-        State#state{dict = dict:erase(ReqId, Dict)};
+        NewTimeoutCount = State#state.timeout_count + 1,
+        case NewTimeoutCount > ?MAX_CONSECUTIVE_TIMEOUTS of
+          true -> exit(emongo_too_many_timeouts);
+          _    -> State#state{dict = dict:erase(ReqId, Dict), timeout_count = NewTimeoutCount}
+        end;
       {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
       {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
       emongo_listen_exited         -> exit(emongo_listen_exited);
@@ -100,6 +109,9 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
     end
   catch _:Error ->
     gen_tcp:close(Socket),
+    % The Pids waiting for responses in Dict will get errors when this Pid exits.  They don't have to wait for a
+    % timeout.
+    % Throw a meaningful error that the emongo module can handle for connections that exit.
     case Error of
       emongo_conn_close ->
         exit(normal);
@@ -113,7 +125,8 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 open_socket(Host, Port, SocketOptions) ->
-  case gen_tcp:connect(Host, Port, [binary, {active, true} | SocketOptions]) of
+  Options = [binary, {active, true}, {keepalive, true} | SocketOptions], % {exit_on_close, true}
+  case gen_tcp:connect(Host, Port, Options) of
     {ok, Sock}      -> Sock;
     {error, Reason} -> exit({emongo_failed_to_open_socket, Reason})
   end.
@@ -124,20 +137,35 @@ gen_call(Pid, Label, ReqId, Request, Timeout) ->
       {ok, Result} -> Result;
       Error        -> exit({emongo_conn_error, Error})
     end
-  catch exit:timeout ->
-    % TODO: If the response to the gen:call() above comes back right in this gap (i.e. before the request has been
-    % cleared from the connection Pid's dictionary), the reply could be sent to this Pid's mailbox and never removed.
-    try
-      % Tell the connection Pid that this call is timing out.
-      gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
-    catch
-      % If a timeout occurred while trying to communicate with the connection, something is really backed up.  However,
-      % if this happens after a connection goes down, it's expected.
-      exit:timeout -> exit({emongo_conn_error, overloaded});
-      % Any other error should not override the timeout we are already handling.
-      _:E          -> E
-    end,
-    exit({emongo_conn_error, timeout})
+  catch
+    exit:timeout ->
+      % TODO: If the response to the gen:call() above comes back right in this gap (i.e. before the request has been
+      % cleared from the connection Pid's dictionary), the reply could be sent to this Pid's mailbox and never cleaned
+      % up.
+      try
+        % Tell the connection Pid that this call is timing out.
+        gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
+      catch
+        % If a timeout occurred while trying to communicate with the connection, something is really backed up.
+        % However, if this happens after a connection goes down, it's expected.
+        exit:timeout -> exit({emongo_conn_error, overloaded});
+        % Any other error should not override the timeout we are already handling.
+        _:E          -> E
+      end,
+      exit({emongo_conn_error, timeout});
+    _:_ ->
+      % If the connection Pid above exits before responding to this Pid, the gen:call() function above will exit with
+      % the exit status of the connection Pid.  For example, consider the following:
+      % try
+      %   gen:call(proc_lib:spawn(fun() ->
+      %     timer:sleep(100),
+      %     exit(emongo_tcp_closed)
+      %   end), test, {1, asdf}, 200)
+      % catch C:E ->
+      %   {C, E}
+      % end.
+      % That code returns: {exit,emongo_tcp_closed}
+      exit({emongo_conn_error, connection_closed})
   end.
 
 process_bin(State = #state{dict = Dict, socket_data = Data}) ->

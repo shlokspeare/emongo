@@ -11,10 +11,11 @@
 -define(OP_KILL_CURSORS, 2007).
 -define(SYS_NAMESPACES, "system.namespaces").
 
--define(WARN(Fmt, Args),      io:format("WARNING (~p:~p): "   Fmt "\n",     [?MODULE, ?LINE | Args])).
 -define(EXCEPTION(Fmt, Args), io:format("EXCEPTION (~p:~p): " Fmt "\n~p\n", [?MODULE, ?LINE | Args] ++
                                                                             [erlang:get_stacktrace()])).
 -define(ERROR(Fmt, Args),     io:format("ERROR (~p:~p): "     Fmt "\n",     [?MODULE, ?LINE | Args])).
+-define(WARN(Fmt, Args),      io:format("WARNING (~p:~p): "   Fmt "\n",     [?MODULE, ?LINE | Args])).
+-define(INFO(Fmt, Args),      io:format("INFO (~p:~p): "      Fmt "\n",     [?MODULE, ?LINE | Args])).
 -define(DEBUG(Fmt, Args),     io:format("DEBUG (~p:~p): "     Fmt "\n",     [?MODULE, ?LINE | Args])).
 -define(DUMP(X),              ?DEBUG("~p = ~p", [??X, X])).
 
