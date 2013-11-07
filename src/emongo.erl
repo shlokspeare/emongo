@@ -1060,10 +1060,10 @@ convert_fields([])                    -> [];
 convert_fields([{Field, Val} | Rest]) -> [{Field, Val} | convert_fields(Rest)];
 convert_fields([Field | Rest])        -> [{Field, 1}   | convert_fields(Rest)].
 
-set_slave_ok(OptionsIn) ->
-  case lists:member(?USE_PRIMARY, OptionsIn) of
-    true -> OptionsIn;
-    _    -> [?SLAVE_OK | OptionsIn]
+set_slave_ok(Options) ->
+  case lists:member(?USE_PRIMARY, Options) of
+    true -> lists:delete(?USE_PRIMARY, Options);
+    _    -> [{<<"$readPreference">>, <<"secondaryPreferred">>}, ?SLAVE_OK | Options]
   end.
 
 % c("../../deps/emongo/src/emongo.erl", [{i, "../../deps/emongo/include"}]).
