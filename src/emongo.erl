@@ -1063,7 +1063,7 @@ convert_fields([Field | Rest])        -> [{Field, 1}   | convert_fields(Rest)].
 set_slave_ok(Options) ->
   case lists:member(?USE_PRIMARY, Options) of
     true -> lists:delete(?USE_PRIMARY, Options);
-    _    -> [{<<"$readPreference">>, <<"secondaryPreferred">>}, ?SLAVE_OK | Options]
+    _    -> [{<<"$readPreference">>, [{<<"mode">>, <<"secondaryPreferred">>}]}, ?SLAVE_OK | Options]
   end.
 
 % c("../../deps/emongo/src/emongo.erl", [{i, "../../deps/emongo/include"}]).
