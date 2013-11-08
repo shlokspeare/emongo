@@ -1,6 +1,6 @@
 -module(emongo_test).
+-include("emongo.hrl").
 -include_lib("eunit/include/eunit.hrl").
--compile(export_all).
 
 -define(NUM_PROCESSES,     100).
 -define(NUM_TESTS_PER_PID, 500).
@@ -9,6 +9,7 @@
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           60000).
 -define(OUT(F, D),         ?debugFmt(F, D)).
+-define(FIND_OPTIONS,      [?USE_PRIMARY]).
 
 setup() ->
   ensure_started(sasl),
@@ -49,13 +50,13 @@ test_upsert() ->
     UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
                                     [{"$set", [{"data", 1}]}], true),
     ?assertEqual(ok, UpsertRes1),
-    Find1 = emongo:find_all(?POOL, ?COLL, Selector),
+    Find1 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
     ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
 
     UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
                                     [{"$set", [{"data", 2}]}], true),
     ?assertEqual(ok, UpsertRes2),
-    Find2 = emongo:find_all(?POOL, ?COLL, Selector),
+    Find2 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
     ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2)
   after
     emongo:delete_sync(?POOL, ?COLL, Selector)
@@ -64,7 +65,7 @@ test_upsert() ->
 
 test_fetch_collections() ->
   ?OUT("Testing collection names fetch", []),
-  [<<"system.indexes">>,<<"test">>] = lists:sort(emongo:get_collections(?POOL)).
+  [<<"system.indexes">>,<<"test">>] = lists:sort(emongo:get_collections(?POOL, ?FIND_OPTIONS)).
 
 test_timing() ->
   ?OUT("Testing timing", []),
@@ -78,7 +79,7 @@ test_timing() ->
 test_drop_collection() ->
   ?OUT("Testing collection drop", []),
   ok = emongo:drop_collection(?POOL, "test"),
-  false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
+  false = lists:member(<<"test">>, emongo:get_collections(?POOL, ?FIND_OPTIONS)).
 
 test_drop_database() ->
   ?OUT("Testing database drop", []),
@@ -88,11 +89,11 @@ test_empty_sel_with_orderby() ->
   ?OUT("Testing empty selector with orderby option", []),
   emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 2}],
                                     [{<<"a">>, 1}]]),
-  Res = emongo:find_all(?POOL, ?COLL, [], [{fields, [{<<"_id">>, 0}]}, {orderby, [{<<"a">>, 1}]}]),
+  Res = emongo:find_all(?POOL, ?COLL, [], [{fields, [{<<"_id">>, 0}]}, {orderby, [{<<"a">>, 1}]} | ?FIND_OPTIONS]),
   ?assertEqual([[{<<"a">>, 1}],
                 [{<<"a">>, 2}]], Res),
   emongo:delete_sync(?POOL, ?COLL, [{<<"a">>, [{<<"$in">>, [1, 2]}]}]),
-  ?assertEqual([], emongo:find_all(?POOL, ?COLL)),
+  ?assertEqual([], emongo:find_all(?POOL, ?COLL, [], ?FIND_OPTIONS)),
   ?OUT("Test passed", []).
 
 test_count() ->
@@ -100,11 +101,13 @@ test_count() ->
   emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 1}], [{<<"a">>, 2}], [{<<"a">>, 3}], [{<<"a">>, 4}], [{<<"a">>, 5}]]),
   %?OUT("Resp = ~p", [emongo:count(?POOL, ?COLL, [{<<"$or">>, [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}],
   %                                [response_options])]),
-  ?assertEqual(5, emongo:count(?POOL, ?COLL, [])),
-  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"a">>, [{lte, 3}]}])),
-  ?assertEqual(2, emongo:count(?POOL, ?COLL, [{<<"a">>, [{gt,  3}]}])),
-  ?assertEqual(4, emongo:count(?POOL, ?COLL, [{<<"$or">>,  [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}])),
-  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"$and">>, [[{<<"a">>, [{gte, 2}]}], [{<<"a">>, [{lte, 4}]}]]}])),
+  ?assertEqual(5, emongo:count(?POOL, ?COLL, [], ?FIND_OPTIONS)),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"a">>, [{lte, 3}]}], ?FIND_OPTIONS)),
+  ?assertEqual(2, emongo:count(?POOL, ?COLL, [{<<"a">>, [{gt,  3}]}], ?FIND_OPTIONS)),
+  ?assertEqual(4, emongo:count(?POOL, ?COLL, [{<<"$or">>,  [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}],
+                               ?FIND_OPTIONS)),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"$and">>, [[{<<"a">>, [{gte, 2}]}], [{<<"a">>, [{lte, 4}]}]]}],
+                               ?FIND_OPTIONS)),
   ?OUT("Test passed", []).
 
 test_performance() ->
@@ -149,7 +152,7 @@ run_single_test(X, Y) ->
       [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
     ok = check_result("update_sync", URes, 1),
 
-    FARes = emongo:find_all(?POOL, ?COLL, Selector),
+    FARes = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
     ?assertEqual([Selector ++ [{<<"fm">>, Num}, {<<"us">>, Num}]], FARes),
 
     DRes = emongo:delete_sync(?POOL, ?COLL, Selector, [response_options]),
