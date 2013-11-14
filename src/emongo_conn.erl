@@ -27,7 +27,7 @@
 
 % If this connection receives more than this many timeouts in a row, the connection will be closed and re-established.
 % 0 means that any timeout will trigger this connection to be reset.
--define(MAX_CONSECUTIVE_TIMEOUTS, 100).
+-define(MAX_CONSECUTIVE_TIMEOUTS, 0).
 -record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0, timeout_count = 0}).
 
 start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
