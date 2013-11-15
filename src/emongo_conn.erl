@@ -22,17 +22,14 @@
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
 -include("emongo.hrl").
--export([start_link/5, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
--export([init_loop/5]).
+-export([start_link/6, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
+-export([init_loop/6]).
 
-% If this connection receives more than this many timeouts in a row, the connection will be closed and re-established.
-% 0 means that any timeout will trigger this connection to be reset.
--define(MAX_CONSECUTIVE_TIMEOUTS, 0).
--record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth = 0, timeout_count = 0}).
+-record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth, disconnect_timeouts, timeout_count = 0}).
 
-start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
-  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, SocketOptions],
-                                ?CONN_TIMEOUT).
+start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
+  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts,
+                                                     SocketOptions], ?CONN_TIMEOUT).
 
 stop(Pid) ->
   Pid ! emongo_conn_close.
@@ -60,10 +57,10 @@ write_pid(Pid) -> Pid.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-init_loop(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) ->
+init_loop(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
   Socket = open_socket(Host, Port, SocketOptions),
   ok = proc_lib:init_ack({ok, self()}),
-  loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth}).
+  loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth, disconnect_timeouts = DisconnectTimeouts}).
 
 loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
   CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) < MaxPipelineDepth),
@@ -98,7 +95,7 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
         after 0 -> ok
         end,
         NewTimeoutCount = State#state.timeout_count + 1,
-        case NewTimeoutCount > ?MAX_CONSECUTIVE_TIMEOUTS of
+        case NewTimeoutCount > State#state.disconnect_timeouts of
           true -> exit(emongo_too_many_timeouts);
           _    -> State#state{dict = dict:erase(ReqId, Dict), timeout_count = NewTimeoutCount}
         end;

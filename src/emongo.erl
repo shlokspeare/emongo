@@ -91,10 +91,18 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
 %   {timeout,            integer()} % milliseconds
 %   {user,               string()}
 %   {password,           string()}
+%   % max_pipeline_depth is the maximum number of messages that are waiting for a response from the DB that can be sent
+%   % across a socket before receiving a reply.  For example, if max_pipeline_depth is 1, only one message that requires
+%   % a response will be sent across a given socket in the pool to the DB before a reply to that request is received.
+%   % Other requests will wait in the queue.  Messages that do not require a response can still be sent on that socket.
+%   % 0 means there is no limit.  This is equivalent to HTTP pipelining, except in the communication with the DB.
 %   {max_pipeline_depth, int()}
 %   {socket_options,     [gen_tcp:connect_option()]} % http://www.erlang.org/doc/man/gen_tcp.html#type-connect_option
 %   {write_concern,      int()}
 %   {write_concern_timeout, integer()} % milliseconds
+%   % disconnect_timeouts is the number of consecutive timeouts allowed on a socket before the socket is disconnected
+%   % and reconnect.  0 means even the first timeout will cause a disconnect and reconnect.
+%   {disconnect_timeouts, int()}
 add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
   Def = #pool{},
   Timeout             = proplists:get_value(timeout,               Options, Def#pool.timeout),
@@ -104,6 +112,7 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
   SocketOptions       = proplists:get_value(socket_options,        Options, Def#pool.socket_options),
   WriteConcern        = proplists:get_value(write_concern,         Options, Def#pool.write_concern),
   WriteConcernTimeout = proplists:get_value(write_concern_timeout, Options, Def#pool.write_concern_timeout),
+  DisconnectTimeouts  = proplists:get_value(disconnect_timeouts,   Options, Def#pool.disconnect_timeouts),
   Pool = #pool{id                    = PoolId,
                host                  = Host,
                port                  = Port,
@@ -115,7 +124,8 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
                max_pipeline_depth    = MaxPipelineDepth,
                socket_options        = SocketOptions,
                write_concern         = WriteConcern,
-               write_concern_timeout = WriteConcernTimeout},
+               write_concern_timeout = WriteConcernTimeout,
+               disconnect_timeouts   = DisconnectTimeouts},
   gen_server:call(?MODULE, {add_pool, Pool}, infinity).
 
 remove_pool(PoolId) ->
@@ -706,16 +716,17 @@ initialize_pools() ->
        end || {PoolId, Props} <- Pools]
   end.
 
-do_open_connections(#pool{id                 = PoolId,
-                          host               = Host,
-                          port               = Port,
-                          size               = Size,
-                          max_pipeline_depth = MaxPipelineDepth,
-                          socket_options     = SocketOptions,
-                          conns              = Conns} = Pool) ->
+do_open_connections(#pool{id                  = PoolId,
+                          host                = Host,
+                          port                = Port,
+                          size                = Size,
+                          max_pipeline_depth  = MaxPipelineDepth,
+                          socket_options      = SocketOptions,
+                          conns               = Conns,
+                          disconnect_timeouts = DisconnectTimeouts} = Pool) ->
   case queue:len(Conns) < Size of
     true ->
-      case emongo_conn:start_link(PoolId, Host, Port, MaxPipelineDepth, SocketOptions) of
+      case emongo_conn:start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) of
         {error, Reason} ->
           throw({emongo_error, Reason});
         {ok, Conn} ->
