@@ -402,8 +402,7 @@ count(PoolId, Collection, Selector, OptionsIn) ->
         undefined -> undefined;
         Count     -> round(Count)
       end;
-    _ ->
-      undefined
+    _ -> undefined
   end.
 
 %%------------------------------------------------------------------------------
@@ -417,13 +416,17 @@ aggregate(PoolId, Collection, Pipeline, OptionsIn) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Query        = create_cmd(<<"aggregate">>, Collection, undefined, [{<<"pipeline">>, {array, Pipeline}}], 1, Options),
   Packet       = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
-  case send_recv_command(aggregate, Collection, Pipeline, Options, Conn, Pool, Packet) of
+  Resp         = send_recv_command(aggregate, Collection, Pipeline, Options, Conn, Pool, Packet),
+  RespOpts     = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
     #response{documents=[Doc]} ->
       case proplists:get_value(<<"ok">>, Doc, undefined) of
-        undefined -> undefined;
-        _         -> Doc
-      end;
-      _ -> undefined
+        undefined -> throw({emongo_aggregation_failed, Resp});
+        _ ->
+          {array, Res} = proplists:get_value(<<"result">>, Doc),
+          Res
+      end
   end.
 
 %%------------------------------------------------------------------------------
@@ -461,11 +464,11 @@ drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
             {<<"ok">>, 1.0} -> ok;
             _ ->
                 case lists:keyfind(<<"errmsg">>, 1, Res) of
-                    {<<"errmsg">>, Error} -> throw({drop_collection_failed, Error});
-                    _ -> throw({drop_collection_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                    {<<"errmsg">>, Error} -> throw({emongo_drop_collection_failed, Error});
+                    _ -> throw({emongo_drop_collection_failed, lists:keyfind(<<"msg">>, 1, Res)})
                 end
         end;
-    _ -> throw({drop_collection_failed, "Unrecognized error while dropping collection"})
+    _ -> throw({emongo_drop_collection_failed, "Unrecognized error while dropping collection"})
   end.
 
 get_collections(PoolId) -> get_collections(PoolId, []).
@@ -533,8 +536,8 @@ drop_database(PoolId, Options) ->
                 {<<"ok">>, 1.0} -> ok;
                 _ ->
                     case lists:keyfind(<<"errmsg">>, 1, Res) of
-                        {<<"errmsg">>, Err} -> throw({drop_database_failed, Err});
-                        _ -> throw({drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                        {<<"errmsg">>, Err} -> throw({emongo_drop_database_failed, Err});
+                        _ -> throw({emongo_drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
                     end
             end;
         _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
