@@ -455,42 +455,46 @@ drop_collection(PoolId, Collection) -> drop_collection(PoolId, Collection, []).
 
 drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  TQuery = create_query([], [{<<"drop">>, Collection}]),
-  Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
-  Packet = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
-  case send_recv_command(drop_collection, "$cmd", Query, Options, Conn, Pool, Packet) of
+  TQuery   = create_query([], [{<<"drop">>, Collection}]),
+  Query    = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Packet   = emongo_packet:do_query(get_database(Pool, Collection), "$cmd", Pool#pool.req_id, Query),
+  Resp     = send_recv_command(drop_collection, "$cmd", Query, Options, Conn, Pool, Packet),
+  RespOpts = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
     #response{documents=[Res]} ->
-        case lists:keyfind(<<"ok">>, 1, Res) of
-            {<<"ok">>, 1.0} -> ok;
-            _ ->
-                case lists:keyfind(<<"errmsg">>, 1, Res) of
-                    {<<"errmsg">>, Error} -> throw({emongo_drop_collection_failed, Error});
-                    _ -> throw({emongo_drop_collection_failed, lists:keyfind(<<"msg">>, 1, Res)})
-                end
-        end;
-    _ -> throw({emongo_drop_collection_failed, "Unrecognized error while dropping collection"})
+      case proplists:get_value(<<"ok">>, Res, undefined) of
+        undefined ->
+          case proplists:get_value(<<"errmsg">>, Res, undefined) of
+            undefined -> throw({emongo_drop_collection_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
+            Error     -> throw({emongo_drop_collection_failed, Error})
+          end;
+        _ -> ok
+      end
   end.
 
 get_collections(PoolId) -> get_collections(PoolId, []).
 get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
   Options = set_slave_ok(OptionsIn),
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Query = create_query(Options, []),
+  Query    = create_query(Options, []),
   Database = to_binary(get_database(Pool, undefined)),
-  Packet = emongo_packet:do_query(Database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
-  case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Conn, Pool, Packet) of
+  Packet   = emongo_packet:do_query(Database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
+  Resp     = send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Conn, Pool, Packet),
+  RespOpts = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
     #response{documents=Docs} ->
-        DatabaseForSplit = <<Database/binary, ".">>,
-        lists:foldl(fun(Doc, Accum) ->
-            Collection = proplists:get_value(<<"name">>, Doc),
-            case binary:match(Collection, <<".$_">>) of
-                nomatch ->
-                    [_Junk, RealName] = binary:split(Collection, DatabaseForSplit),
-                    [ RealName | Accum ];
-                _ -> Accum
-            end
-        end, [], Docs);
-    _ -> undefined
+      DatabaseForSplit = <<Database/binary, ".">>,
+      lists:foldl(fun(Doc, Accum) ->
+        Collection = proplists:get_value(<<"name">>, Doc),
+        case binary:match(Collection, <<".$_">>) of
+          nomatch ->
+            [_Junk, RealName] = binary:split(Collection, DatabaseForSplit),
+            [ RealName | Accum ];
+          _ -> Accum
+        end
+      end, [], Docs)
   end.
 
 run_command(PoolId, Command, Options) ->
@@ -526,24 +530,22 @@ drop_database(PoolId, Options) ->
     %dropped db
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Selector = [{<<"dropDatabase">>, 1}],
-  TQuery = create_query([], Selector),
-  Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
-  DropPacket = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
-  try
-    case send_recv_command(drop_database, undefined, Selector, Options, Conn, Pool, DropPacket) of
-        #response{documents=[Res]} ->
-            case lists:keyfind(<<"ok">>, 1, Res) of
-                {<<"ok">>, 1.0} -> ok;
-                _ ->
-                    case lists:keyfind(<<"errmsg">>, 1, Res) of
-                        {<<"errmsg">>, Err} -> throw({emongo_drop_database_failed, Err});
-                        _ -> throw({emongo_drop_database_failed, lists:keyfind(<<"msg">>, 1, Res)})
-                    end
-            end;
-        _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
-    end
-  catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, "$cmd", "undefined", Selector, Options})
+  TQuery   = create_query([], Selector),
+  Query    = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Packet   = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
+  Resp     = send_recv_command(drop_database, undefined, Selector, Options, Conn, Pool, Packet),
+  RespOpts = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
+    #response{documents=[Res]} ->
+      case proplists:get_value(<<"ok">>, Res, undefined) of
+        undefined ->
+          case proplists:get_value(<<"errmsg">>, Res, undefined) of
+            undefined -> throw({emongo_drop_database_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
+            Error     -> throw({emongo_drop_database_failed, Error})
+          end;
+        _ -> ok
+      end
   end.
 
 %====================================================================
@@ -988,8 +990,8 @@ sync_command(Command, Collection, Selector, Options, Conn, Pool, Packet1) ->
       false -> get_sync_result(Resp, lists:member(check_match_found, Options))
     end
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -998,8 +1000,8 @@ send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send_recv(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -1008,8 +1010,8 @@ send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)} | Options]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
+           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 % TODO: Include selector in emongo_error messages.
