@@ -990,8 +990,8 @@ sync_command(Command, Collection, Selector, Options, Conn, Pool, Packet1) ->
       false -> get_sync_result(Resp, lists:member(check_match_found, Options))
     end
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{options, Options}, {msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -1000,8 +1000,8 @@ send_recv_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send_recv(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{options, Options}, {msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
@@ -1010,8 +1010,8 @@ send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
       emongo_conn:send(Conn, Pool#pool.req_id, Packet, get_timeout(Options, Pool))
     end)
   catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, Command, Collection, Selector, Options,
-           [{msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
+    throw({emongo_conn_error, Error, Command, Collection, Selector,
+           [{options, Options}, {msg_queue_len, emongo_conn:queue_lengths(Conn)}]})
   end.
 
 % TODO: Include selector in emongo_error messages.
