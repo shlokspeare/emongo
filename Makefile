@@ -6,7 +6,13 @@ include $(BUILDTOOLS_ROOT)/make/buildtools.mk
 
 TMP := out/emongo.tmp/emongo
 TAR := out/emongo.tar
-default: all $(TAR)
+RPK := out/emongo.rpk
+
+default: all $(RPK)
+
+
+$(RPK): rxpackage.json $(TAR)
+	rxbuild package -r $< $@ $(TAR)
 
 $(TAR):
 	rm -rf $(dir $(TMP))
