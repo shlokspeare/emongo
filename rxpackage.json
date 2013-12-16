@@ -1,0 +1,13 @@
+{
+    "name": "emongo",
+    "version": "1.0.0",
+
+    "build-deps": [ ],
+
+    "contents": [
+        {
+            "name": "emongo.tar",
+            "type": "tar"
+        }
+    ]
+}
