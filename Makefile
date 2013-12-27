@@ -10,21 +10,29 @@ RPK := out/emongo.rpk
 
 default: all $(RPK)
 
+include out/rxbuild.mk
+
+out:
+	mkdir $@
+
+out/rxbuild.mk: rxpackage.json | out
+	rxbuild info --make > $@
 
 $(RPK): rxpackage.json $(TAR)
 	rxbuild package -r $< $@ $(TAR)
 
 $(TAR):
 	rm -rf $(dir $(TMP))
-	install -d -m 0755 $(TMP)/emongo-1/ebin
-	install -m 0644 ebin/* $(TMP)/emongo-1/ebin/
+	install -d -m 0755 $(TMP)/ebin
+	install -m 0644 ebin/* $(TMP)/ebin/
 	mkdir -p $(@D)
-	tar -C $(dir $(TMP)) -c $(notdir $(TMP)) > $@
+	tar -C $(dir $(TMP)) -c . > $@
 
-all: emake
+all: emake $(RPK)
 
 emake:
 	erl -make
+	@sed -i 's/{ *vsn *,.*}/{vsn, "$(RXBUILD_version)"}/' ebin/emongo.app
 
 test: emake
 	prove t/*.t

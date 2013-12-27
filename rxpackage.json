@@ -7,7 +7,8 @@
     "contents": [
         {
             "name": "emongo.tar",
-            "type": "tar"
+            "type": "tar",
+            "unpack": "erllib/%(name)s-%(version)s"
         }
     ]
 }
