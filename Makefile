@@ -4,13 +4,14 @@ BUILDTOOLS_GCC_VERSION := 4.4.7
 export LD_LIBRARY_PATH := $(LD_LIBRARY_PATH):$(GCC_SYSROOT)/usr/lib
 include $(BUILDTOOLS_ROOT)/make/buildtools.mk
 
-TMP := out/emongo.tmp/emongo
 TAR := out/emongo.tar
 RPK := out/emongo.rpk
 
 default: all $(RPK)
 
 include out/rxbuild.mk
+
+TMP := out/emongo.tmp/emongo-$(RXBUILD_version)
 
 out:
 	mkdir $@
@@ -21,7 +22,7 @@ out/rxbuild.mk: rxpackage.json | out
 $(RPK): rxpackage.json $(TAR)
 	rxbuild package -r $< $@ $(TAR)
 
-$(TAR):
+$(TAR) Makefile:
 	rm -rf $(dir $(TMP))
 	install -d -m 0755 $(TMP)/ebin
 	install -m 0644 ebin/* $(TMP)/ebin/
