@@ -12,6 +12,8 @@ default: all $(RPK)
 
 include out/rxbuild.mk
 
+TMP := out/emongo.tmp/emongo-$(RXBUILD_version)
+
 out:
 	mkdir $@
 
@@ -21,7 +23,7 @@ out/rxbuild.mk: rxpackage.json | out
 $(RPK): rxpackage.json $(TAR)
 	rxbuild package -r $< $@ $(TAR)
 
-$(TAR):
+$(TAR) Makefile:
 	rm -rf $(dir $(TMP))
 	install -d -m 0755 $(TMP)/ebin
 	install -m 0644 ebin/* $(TMP)/ebin/
