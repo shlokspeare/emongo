@@ -4,7 +4,7 @@ BUILDTOOLS_GCC_VERSION := 4.4.7
 export LD_LIBRARY_PATH := $(LD_LIBRARY_PATH):$(GCC_SYSROOT)/usr/lib
 include $(BUILDTOOLS_ROOT)/make/buildtools.mk
 
-TMP := out/emongo.tmp/emongo
+TMP := out/emongo.tmp/
 TAR := out/emongo.tar
 RPK := out/emongo.rpk
 
