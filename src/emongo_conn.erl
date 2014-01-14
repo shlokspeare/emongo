@@ -50,7 +50,7 @@ send_recv(Pid, ReqId, Packet, Timeout) ->
   Resp#response{documents=Documents}.
 
 queue_lengths(Pid) ->
-  case erlang:process_info(Pid,  message_queue_len) of
+  case erlang:process_info(Pid, message_queue_len) of
     {_, QueueLen} -> QueueLen;
     _             -> 0
   end.
