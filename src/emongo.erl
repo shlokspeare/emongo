@@ -481,8 +481,10 @@ drop_database(PoolId, Options) ->
             end;
         _ -> {drop_collection_failed, "oh snap, i dont know what happened"}
     end
-  catch _:{emongo_conn_error, Error} ->
-    throw({emongo_conn_error, Error, "$cmd", "undefined", Selector, Options})
+  catch
+    _:{emongo_conn_error, {'EXIT',normal}} -> ok;
+    _:{emongo_conn_error, Error} ->
+        throw({emongo_conn_error, Error, "$cmd", "undefined", Selector, Options})
   end.
 %====================================================================
 % gen_server callbacks
