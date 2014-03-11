@@ -416,7 +416,7 @@ find_and_modify(PoolId, Collection, Selector, Update, Options)
 %====================================================================
 drop_collection(PoolId, Collection) -> drop_collection(PoolId, Collection, []).
 
-drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
+drop_collection(PoolId, Collection, Options) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   TQuery = create_query(proplists:delete(timeout, Options), [{<<"drop">>, Collection}]),
   Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
@@ -435,7 +435,7 @@ drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   end.
 
 get_collections(PoolId) -> get_collections(PoolId, []).
-get_collections(PoolId, Options) when is_atom(PoolId) ->
+get_collections(PoolId, Options) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
   Query = create_query(proplists:delete(timeout, Options), []),
   Packet = emongo_packet:do_query(Pool#pool.database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
