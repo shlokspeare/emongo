@@ -389,12 +389,12 @@ find_and_modify(PoolId, Collection, Selector, Update) ->
 find_and_modify(PoolId, Collection, Selector, Update, Options)
   when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Update), is_list(Options) ->
   {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
-  Collection1 = to_binary(Collection),
+  Collection1 = emongo_utils:as_binary(Collection),
   Selector1 = transform_selector(Selector),
   Fields = proplists:get_value(fields, Options, []),
   FieldSelector = convert_fields(Fields),
   Options1 = proplists:delete(fields, Options),
-  Options2 = [{to_binary(Opt), Val} || {Opt, Val} <- proplists:delete(timeout, Options1)],
+  Options2 = [{emongo_utils:as_binary(Opt), Val} || {Opt, Val} <- proplists:delete(timeout, Options1)],
   Query = #emo_query{q = [{<<"findandmodify">>, Collection1},
               {<<"query">>,     Selector1},
               {<<"update">>,    Update},
@@ -441,7 +441,7 @@ get_collections(PoolId, Options) ->
   Packet = emongo_packet:do_query(Pool#pool.database, ?SYS_NAMESPACES, Pool#pool.req_id, Query),
   case send_recv_command(get_collections, ?SYS_NAMESPACES, Query, Options, Pid, Pool#pool.req_id, Packet,  proplists:get_value(timeout, Options, ?TIMEOUT)) of
     #response{documents=Docs} ->
-        Database = list_to_binary(Pool#pool.database ++ "."),
+        Database = emongo_utils:as_binary(emongo_utils:as_list(Pool#pool.database) ++ "."),
         lists:foldl(fun(Doc, Accum) ->
             Collection = proplists:get_value(<<"name">>, Doc),
             case binary:match(Collection, <<".$">>) of
@@ -685,7 +685,7 @@ do_auth(Pid, Pool, User, Hash) ->
     error -> throw(emongo_getnonce);
     N     -> N
   end,
-  Digest = emongo:dec2hex(erlang:md5(binary_to_list(Nonce) ++ User ++ Hash)),
+  Digest = emongo:dec2hex(erlang:md5(emongo_utils:as_list(Nonce) ++ User ++ Hash)),
   Query = #emo_query{q=[{<<"authenticate">>, 1}, {<<"user">>, User},
                         {<<"nonce">>, Nonce}, {<<"key">>, Digest}], limit=1},
   Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id,
@@ -737,7 +737,7 @@ dec2hex(N,<<>>) ->
   N.
 
 hex2dec(Hex) when is_list(Hex) ->
-  hex2dec(list_to_binary(Hex));
+  hex2dec(emongo_utils:as_binary(Hex));
 
 hex2dec(Hex) ->
   hex2dec(<<>>, Hex).
@@ -924,10 +924,6 @@ check_match_found(Doc, _) ->
     {_, _} -> ok;
     false  -> throw({emongo_error, {invalid_response, Doc}})
   end.
-
-to_binary(V) when is_binary(V) -> V;
-to_binary(V) when is_list(V)   -> list_to_binary(V);
-to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
 
 convert_fields(Fields) ->
   [{Field, 1} || Field <- Fields].
