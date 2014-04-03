@@ -6,22 +6,22 @@ include $(BUILDTOOLS_ROOT)/make/buildtools.mk
 
 TMP := out/emongo.tmp/
 TAR := out/emongo.tar
-RPK := out/emongo.rpk
+APK := out/emongo.apk
 
-default: all $(RPK)
+default: all $(APK)
 
-include out/rxbuild.mk
+include out/abuild.mk
 
-TMP := out/emongo.tmp/emongo-$(RXBUILD_version)
+TMP := out/emongo.tmp/emongo-$(ABUILD_version)
 
 out:
 	mkdir $@
 
-out/rxbuild.mk: rxpackage.json | out
-	rxbuild info --make > $@
+out/abuild.mk: apackage.json | out
+	abuild info --make > $@
 
-$(RPK): rxpackage.json $(TAR)
-	rxbuild package -r $< $@ $(TAR)
+$(APK): apackage.json $(TAR)
+	abuild package -r $< $@ $(TAR)
 
 $(TAR) Makefile:
 	rm -rf $(dir $(TMP))
@@ -30,11 +30,11 @@ $(TAR) Makefile:
 	mkdir -p $(@D)
 	tar -C $(dir $(TMP)) -c . > $@
 
-all: emake $(RPK)
+all: emake $(APK)
 
 emake:
 	erl -make
-	@sed -i 's/{ *vsn *,.*}/{vsn, "$(RXBUILD_version)"}/' ebin/emongo.app
+	@sed -i 's/{ *vsn *,.*}/{vsn, "$(ABUILD_version)"}/' ebin/emongo.app
 
 test: emake
 	prove t/*.t
