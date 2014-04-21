@@ -510,7 +510,7 @@ run_command(PoolId, Command, Options) ->
 total_db_time_usec() ->
   case erlang:get(?TIMING_KEY) of
     undefined -> 0;
-    Timing    -> lists:sum([proplists:get_value(time_usec, X) || X <- Timing])
+    Timing    -> lists:sum([proplists:get_value(time_usec, X, 0) || X <- Timing])
   end.
 
 db_timing() ->
@@ -603,7 +603,7 @@ handle_call({add_pool, NewPool = #pool{id = PoolId}}, _From, #state{pools = Pool
 
 handle_call({remove_pool, PoolId}, _From, #state{pools=Pools}=State) ->
   {Result, Pools1} =
-    case proplists:get_value(PoolId, Pools) of
+    case proplists:get_value(PoolId, Pools, undefined) of
       undefined ->
         {not_found, Pools};
       #pool{conns = Conns} ->
@@ -767,24 +767,18 @@ authorize_conn_for_db(DB, Pool, Query, Conn) ->
   Packet = emongo_packet:do_query(DB, "$cmd", Pool#pool.req_id, Query),
   Resp = send_recv_command(do_auth, "$cmd", undefined, [], Conn, Pool, Packet),
   [Res] = Resp#response.documents,
-  case lists:keyfind(<<"ok">>, 1, Res) of
-    {<<"ok">>, 1.0} -> ok;
-    _ ->
-      case lists:keyfind(<<"errmsg">>, 1, Res) of
-        {<<"errmsg">>, Error} ->
-          throw({emongo_authentication_failed, Error});
-        _ ->
-          throw({emongo_authentication_failed, <<"Unknown error">>})
-      end
+  case proplists:get_value(<<"ok">>, Res) of
+    1.0 -> ok;
+    _   -> throw({emongo_authentication_failed, proplists:get_value(<<"errmsg">>, Res)})
   end.
 
 getnonce(Conn, DB, Pool) ->
   Query1 = #emo_query{q=[{<<"getnonce">>, 1}], limit=1},
   Packet = emongo_packet:do_query(DB, "$cmd", Pool#pool.req_id, Query1),
   Resp1 = send_recv_command(getnonce, "$cmd", undefined, [], Conn, Pool, Packet),
-  case lists:keyfind(<<"nonce">>, 1, lists:nth(1, Resp1#response.documents)) of
-    false                -> error;
-    {<<"nonce">>, Nonce} -> Nonce
+  case proplists:get_value(<<"nonce">>, lists:nth(1, Resp1#response.documents), undefined) of
+    undefined -> error;
+    Nonce     -> Nonce
   end.
 
 get_pool(PoolId, Pools) ->
@@ -1017,11 +1011,18 @@ send_command(Command, Collection, Selector, Options, Conn, Pool, Packet) ->
 % TODO: Include selector in emongo_error messages.
 
 get_sync_result(#response{documents = [Doc]}, CheckMatchFound) ->
-  case lists:keyfind(<<"err">>, 1, Doc) of
-    {_, undefined}     -> check_match_found(Doc, CheckMatchFound);
-    {_, <<"timeout">>} -> throw({emongo_conn_error, db_timeout});
-    {_, Msg}           -> throw({emongo_error, Msg});
-    _                  -> throw({emongo_error, {invalid_error_message, Doc}})
+  case proplists:get_value(<<"err">>, Doc, undefined) of
+    undefined -> check_match_found(Doc, CheckMatchFound);
+    ErrorMsg  ->
+      case proplists:get_value(<<"code">>, Doc) of
+        11000 -> throw({emongo_error, duplicate_key, ErrorMsg});
+        11001 -> throw({emongo_error, duplicate_key, ErrorMsg});
+        _     -> ok
+      end,
+      case ErrorMsg of
+        <<"timeout">> -> throw({emongo_conn_error, db_timeout});
+        _             -> throw({emongo_error, ErrorMsg})
+      end
   end;
 get_sync_result(Resp, _CheckMatchFound) ->
   throw({emongo_error, {invalid_response, Resp}}).
@@ -1030,14 +1031,14 @@ check_match_found(_Doc, false) -> ok;
 check_match_found(Doc, _) ->
   % For some reason, "updatedExisting" isn't always in the response.  If it is there, use the value it returns.
   % Otherwise, fall back on "n", which seems to always be there.
-  case lists:keyfind(<<"updatedExisting">>, 1, Doc) of
-    {_, true}  -> ok;
-    {_, false} -> {emongo_no_match_found, Doc};
+  case proplists:get_value(<<"updatedExisting">>, Doc) of
+    true  -> ok;
+    false -> {emongo_no_match_found, Doc};
     _ ->
-      case lists:keyfind(<<"n">>, 1, Doc) of
-        {_, 0} -> {emongo_no_match_found, Doc};
-        {_, _} -> ok;
-        false  -> throw({emongo_error, {invalid_response, Doc}})
+      case proplists:get_value(<<"n">>, Doc, undefined) of
+        undefined -> throw({emongo_error, {invalid_response, Doc}});
+        0         -> {emongo_no_match_found, Doc};
+        _         -> ok
       end
   end.
 
