@@ -1,6 +1,7 @@
 BUILDTOOLS_ROOT ?= $(abspath ../buildtools)
-BUILDTOOLS_ERLANG_VERSION := 15.b.3-dfsg-1~reflex.1-3.1.2-1
-BUILDTOOLS_GCC_VERSION := 4.4.7
+
+include $(BUILDTOOLS_ROOT)/make/defaults.mk
+
 export LD_LIBRARY_PATH := $(LD_LIBRARY_PATH):$(GCC_SYSROOT)/usr/lib
 include $(BUILDTOOLS_ROOT)/make/buildtools.mk
 
