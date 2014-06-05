@@ -36,7 +36,8 @@
          aggregate/3, aggregate/4, get_collections/1, get_collections/2,
          count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
          hex2dec/1, utf8_encode/1, drop_collection/2, drop_collection/3,
-         drop_database/1, drop_database/2]).
+         drop_database/1, drop_database/2, get_databases/1, get_databases/2,
+         run_command/1, run_command/2]).
 
 -include("emongo.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -486,6 +487,47 @@ drop_database(PoolId, Options) ->
     _:{emongo_conn_error, Error} ->
         throw({emongo_conn_error, Error, "$cmd", "undefined", Selector, Options})
   end.
+
+get_databases(PoolId) -> get_databases(PoolId, []).
+
+get_databases(PoolId, Options) ->
+  {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+  TQuery = create_query(proplists:delete(timeout, Options), [{<<"listDatabases">>, 1}]),
+  Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  case send_recv_command(get_databases, "$cmd", Query, [], Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)) of
+    #response{documents=[Res]} ->
+        case lists:keyfind(<<"ok">>, 1, Res) of
+            {<<"ok">>, 1.0} -> proplists:delete(<<"ok">>, Res);
+            _ ->
+                case lists:keyfind(<<"errmsg">>, 1, Res) of
+                    {<<"errmsg">>, Error} -> throw({get_databases_failed, Error});
+                    _ -> throw({get_databases_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                end
+        end;
+    _ -> {get_databases_failed, "oh snap, i dont know what happened"}
+  end.
+
+run_command(PoolId, Command) -> run_command(PoolId, Command, []).
+
+run_command(PoolId, Command, Options) ->
+  {Pid, Pool} = gen_server:call(?MODULE, {pid, PoolId}, infinity),
+  TQuery = create_query(proplists:delete(timeout, Options), Command),
+  Query = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Packet = emongo_packet:do_query(Pool#pool.database, "$cmd", Pool#pool.req_id, Query),
+  case send_recv_command(get_databases, "$cmd", Query, [], Pid, Pool#pool.req_id, Packet, proplists:get_value(timeout, Options, ?TIMEOUT)) of
+    #response{documents=[Res]} ->
+        case lists:keyfind(<<"ok">>, 1, Res) of
+            {<<"ok">>, 1.0} -> proplists:delete(<<"ok">>, Res);
+            _ ->
+                case lists:keyfind(<<"errmsg">>, 1, Res) of
+                    {<<"errmsg">>, Error} -> throw({run_command_failed, Error});
+                    _ -> throw({run_command_failed, lists:keyfind(<<"msg">>, 1, Res)})
+                end
+        end;
+    _ -> {run_command_failed, "oh snap, i dont know what happened"}
+  end.
+
 %====================================================================
 % gen_server callbacks
 %====================================================================
