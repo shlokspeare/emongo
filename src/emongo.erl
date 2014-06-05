@@ -37,7 +37,7 @@
          count/3, count/4, find_and_modify/4, find_and_modify/5, dec2hex/1,
          hex2dec/1, utf8_encode/1, drop_collection/2, drop_collection/3,
          drop_database/1, drop_database/2, get_databases/1, get_databases/2,
-         run_command/1, run_command/2]).
+         run_command/2, run_command/3]).
 
 -include("emongo.hrl").
 -include_lib("eunit/include/eunit.hrl").
