@@ -134,7 +134,7 @@ gen_call(Pid, Label, ReqId, Request, Timeout) ->
   try
     case gen:call(Pid, Label, Request, Timeout) of
       {ok, Result} -> Result;
-      Error        -> exit({emongo_conn_error, Error})
+      Error        -> exit(Error)
     end
   catch
     exit:timeout ->
