@@ -1,5 +1,6 @@
 -module(emongo_test).
 -include("emongo.hrl").
+-include("emongo_test.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(NUM_PROCESSES,     100).
@@ -22,6 +23,9 @@ cleanup(_) ->
   emongo:drop_database(?POOL),
   ok.
 
+clear_coll() ->
+  emongo:delete_sync(?POOL, ?COLL).
+
 run_test_() ->
   [{setup,
     fun setup/0,
@@ -35,6 +39,7 @@ run_test_() ->
       fun test_upsert/0, % rerun upsert to make sure we can still do our work
       fun test_empty_sel_with_orderby/0,
       fun test_count/0,
+      fun test_encoding_performance/0,
       {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
@@ -44,28 +49,24 @@ run_test_() ->
 test_upsert() ->
   ?OUT("Testing upsert", []),
   Selector = [{<<"_id">>, <<"upsert_test">>}],
-  try
-    emongo:delete_sync(?POOL, ?COLL, Selector),
+  UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                  [{"$set", [{"data", 1}]}], true),
+  ?assertEqual(ok, UpsertRes1),
+  Find1 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
+  ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
 
-    UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
-                                    [{"$set", [{"data", 1}]}], true),
-    ?assertEqual(ok, UpsertRes1),
-    Find1 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
-    ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
-
-    UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
-                                    [{"$set", [{"data", 2}]}], true),
-    ?assertEqual(ok, UpsertRes2),
-    Find2 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
-    ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2)
-  after
-    emongo:delete_sync(?POOL, ?COLL, Selector)
-  end,
+  UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                  [{"$set", [{"data", 2}]}], true),
+  ?assertEqual(ok, UpsertRes2),
+  Find2 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
+  ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2),
+  clear_coll(),
   ?OUT("Test passed", []).
 
 test_fetch_collections() ->
-  ?OUT("Testing collection names fetch", []),
-  [<<"system.indexes">>,<<"test">>] = lists:sort(emongo:get_collections(?POOL, ?FIND_OPTIONS)).
+  ?OUT("Testing fetch collections", []),
+  [<<"system.indexes">>, ?COLL] = lists:sort(emongo:get_collections(?POOL, ?FIND_OPTIONS)),
+  ?OUT("Test passed", []).
 
 test_timing() ->
   ?OUT("Testing timing", []),
@@ -77,13 +78,15 @@ test_timing() ->
   ?OUT("Test passed", []).
 
 test_drop_collection() ->
-  ?OUT("Testing collection drop", []),
-  ok = emongo:drop_collection(?POOL, "test"),
-  false = lists:member(<<"test">>, emongo:get_collections(?POOL, ?FIND_OPTIONS)).
+  ?OUT("Testing drop collection", []),
+  ok = emongo:drop_collection(?POOL, ?COLL),
+  ?assertEqual(false, lists:member(?COLL, emongo:get_collections(?POOL, ?FIND_OPTIONS))),
+  ?OUT("Test passed", []).
 
 test_drop_database() ->
-  ?OUT("Testing database drop", []),
-  ok = emongo:drop_database(?POOL).
+  ?OUT("Testing drop database", []),
+  ok = emongo:drop_database(?POOL),
+  ?OUT("Test passed", []).
 
 test_empty_sel_with_orderby() ->
   ?OUT("Testing empty selector with orderby option", []),
@@ -92,7 +95,7 @@ test_empty_sel_with_orderby() ->
   Res = emongo:find_all(?POOL, ?COLL, [], [{fields, [{<<"_id">>, 0}]}, {orderby, [{<<"a">>, 1}]} | ?FIND_OPTIONS]),
   ?assertEqual([[{<<"a">>, 1}],
                 [{<<"a">>, 2}]], Res),
-  emongo:delete_sync(?POOL, ?COLL, [{<<"a">>, [{<<"$in">>, [1, 2]}]}]),
+  clear_coll(),
   ?assertEqual([], emongo:find_all(?POOL, ?COLL, [], ?FIND_OPTIONS)),
   ?OUT("Test passed", []).
 
@@ -108,20 +111,33 @@ test_count() ->
                                ?FIND_OPTIONS)),
   ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"$and">>, [[{<<"a">>, [{gte, 2}]}], [{<<"a">>, [{lte, 4}]}]]}],
                                ?FIND_OPTIONS)),
+  clear_coll(),
+  ?OUT("Test passed", []).
+
+test_encoding_performance() ->
+  ?OUT("Testing encoding performance", []),
+  {EncodeTime, ok} = timer:tc(fun() ->
+    lists:foreach(fun(_) ->
+      <<_/binary>> = emongo_bson:encode(?REALLY_BIG_DOCUMENT)
+    end, lists:seq(1, 1000))
+  end),
+  ?OUT("Encoding a really big document 1000 times took ~p microseconds", [EncodeTime]),
+  {WriteTime, ok} = timer:tc(fun() ->
+    lists:foreach(fun(_) ->
+      emongo:insert_sync(?POOL, ?COLL, ?REALLY_BIG_DOCUMENT)
+    end, lists:seq(1, 1000))
+  end),
+  ?OUT("Encoding and writing a really big document to DB 1000 times took ~p microseconds", [WriteTime]),
+  clear_coll(),
   ?OUT("Test passed", []).
 
 test_performance() ->
   ?OUT("Testing performance.", []),
-  emongo:delete_sync(?POOL, ?COLL),
   Start = cur_time_ms(),
-  try
-    Ref = make_ref(),
-    start_processes(Ref),
-    block_until_done(Ref)
-  after
-    % Clean up in case something failed.
-    emongo:delete_sync(?POOL, ?COLL)
-  end,
+  Ref = make_ref(),
+  start_processes(Ref),
+  block_until_done(Ref),
+  clear_coll(),
   End = cur_time_ms(),
   ?OUT("Test passed in ~p ms\n", [End - Start]).
 
