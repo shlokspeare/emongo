@@ -260,7 +260,7 @@ insert_sync(PoolId, Collection, Documents) ->
 insert_sync(PoolId, Collection, DocumentsIn, Options) ->
   Documents = if
     ?IS_LIST_OF_DOCUMENTS(DocumentsIn) -> DocumentsIn;
-    ?IS_DOCUMENT(DocumentsIn)      -> [DocumentsIn]
+    ?IS_DOCUMENT(DocumentsIn)          -> [DocumentsIn]
   end,
 
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
