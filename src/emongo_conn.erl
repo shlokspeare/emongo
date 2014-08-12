@@ -28,8 +28,8 @@
 -record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth, disconnect_timeouts, timeout_count = 0}).
 
 start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
-  {ok, _} = proc_lib:start_link(?MODULE, init_loop, [PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts,
-                                                     SocketOptions], ?CONN_TIMEOUT).
+  Args = [PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions],
+  {ok, _} = proc_lib:start_link(?MODULE, init_loop, Args, ?CONN_TIMEOUT).
 
 stop(Pid) ->
   Pid ! emongo_conn_close.

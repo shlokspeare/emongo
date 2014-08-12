@@ -731,13 +731,10 @@ do_open_connections(#pool{id                  = PoolId,
                           disconnect_timeouts = DisconnectTimeouts} = Pool) ->
   case queue:len(Conns) < Size of
     true ->
-      case emongo_conn:start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) of
-        {error, Reason} ->
-          throw({emongo_error, Reason});
-        {ok, Conn} ->
-          NewPool = do_auth(Conn, Pool),
-          do_open_connections(NewPool#pool{conns = queue:in(Conn, Conns)})
-      end;
+      % The emongo_conn:start_link function will throw an exception if it is unable to connect.
+      {ok, Conn} = emongo_conn:start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions),
+      NewPool = do_auth(Conn, Pool),
+      do_open_connections(NewPool#pool{conns = queue:in(Conn, Conns)});
     false -> Pool
   end.
 
