@@ -1,25 +1,30 @@
 -module(emongo_test).
+-include("emongo.hrl").
+-include("emongo_test.hrl").
 -include_lib("eunit/include/eunit.hrl").
--compile(export_all).
 
 -define(NUM_PROCESSES,     100).
 -define(NUM_TESTS_PER_PID, 500).
 -define(POOL,              pool1).
+-define(POOL_SIZE,         10).
 -define(COLL,              <<"test">>).
 -define(TIMEOUT,           60000).
 -define(OUT(F, D),         ?debugFmt(F, D)).
+-define(FIND_OPTIONS,      [?USE_PRIMARY]).
 
 setup() ->
   ensure_started(sasl),
   ensure_started(emongo),
-  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", 10),
-                  %"test_username", "test_password"),
+  emongo:add_pool(?POOL, "localhost", 27017, "testdatabase", ?POOL_SIZE),
   emongo:delete_sync(?POOL, ?COLL),
   ok.
 
 cleanup(_) ->
   emongo:drop_database(?POOL),
   ok.
+
+clear_coll() ->
+  emongo:delete_sync(?POOL, ?COLL).
 
 run_test_() ->
   [{setup,
@@ -28,62 +33,111 @@ run_test_() ->
     [
       fun test_upsert/0,
       fun test_fetch_collections/0,
-      {timeout, ?TIMEOUT div 1000, [fun test_performance/0]},
+      fun test_timing/0,
       fun test_drop_collection/0,
       fun test_drop_database/0,
-      fun test_upsert/0 %rerun upsert to make sure we can still do our work
+      fun test_upsert/0, % rerun upsert to make sure we can still do our work
+      fun test_empty_sel_with_orderby/0,
+      fun test_count/0,
+      fun test_encoding_performance/0,
+      {timeout, ?TIMEOUT div 1000, [fun test_performance/0]}
     ]
   }].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-test_fetch_collections() ->
-  ?OUT("Testing collection names fetch", []),
-  [<<"system.indexes">>,<<"test">>] = lists:sort(emongo:get_collections(?POOL)).
-
-test_drop_collection() ->
-  ?OUT("Testing collection drop", []),
-    ok = emongo:drop_collection(?POOL, "test"),
-    false = lists:member(<<"test">>, emongo:get_collections(?POOL)).
-
-test_drop_database() ->
-  ?OUT("Testing databsae drop", []),
-  ok = emongo:drop_database(?POOL).
-
 test_upsert() ->
   ?OUT("Testing upsert", []),
   Selector = [{<<"_id">>, <<"upsert_test">>}],
-  try
-    emongo:delete_sync(?POOL, ?COLL, Selector),
+  UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                  [{"$set", [{"data", 1}]}], true),
+  ?assertEqual(ok, UpsertRes1),
+  Find1 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
+  ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
 
-    UpsertRes1 = emongo:update_sync(?POOL, ?COLL, Selector,
-                                    [{"$set", [{"data", 1}]}], true),
-    ?assertEqual(ok, UpsertRes1),
-    Find1 = emongo:find_all(?POOL, ?COLL, Selector),
-    ?assertEqual([Selector ++ [{<<"data">>, 1}]], Find1),
+  UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
+                                  [{"$set", [{"data", 2}]}], true),
+  ?assertEqual(ok, UpsertRes2),
+  Find2 = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
+  ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2),
+  clear_coll(),
+  ?OUT("Test passed", []).
 
-    UpsertRes2 = emongo:update_sync(?POOL, ?COLL, Selector,
-                                    [{"$set", [{"data", 2}]}], true),
-    ?assertEqual(ok, UpsertRes2),
-    Find2 = emongo:find_all(?POOL, ?COLL, Selector),
-    ?assertEqual([Selector ++ [{<<"data">>, 2}]], Find2)
-  after
-    emongo:delete_sync(?POOL, ?COLL, Selector)
-  end,
+test_fetch_collections() ->
+  ?OUT("Testing fetch collections", []),
+  [<<"system.indexes">>, ?COLL] = lists:sort(emongo:get_collections(?POOL, ?FIND_OPTIONS)),
+  ?OUT("Test passed", []).
+
+test_timing() ->
+  ?OUT("Testing timing", []),
+  emongo:clear_timing(),
+  run_single_test(1, 1),
+  ?OUT("DB Total Time: ~p usec",  [emongo:total_db_time_usec()]),
+  ?OUT("DB Timing Breakdown: ~p", [emongo:db_timing()]),
+  ?OUT("DB Queue Lengths: ~p",    [emongo:queue_lengths()]),
+  ?OUT("Test passed", []).
+
+test_drop_collection() ->
+  ?OUT("Testing drop collection", []),
+  ok = emongo:drop_collection(?POOL, ?COLL),
+  ?assertEqual(false, lists:member(?COLL, emongo:get_collections(?POOL, ?FIND_OPTIONS))),
+  ?OUT("Test passed", []).
+
+test_drop_database() ->
+  ?OUT("Testing drop database", []),
+  ok = emongo:drop_database(?POOL),
+  ?OUT("Test passed", []).
+
+test_empty_sel_with_orderby() ->
+  ?OUT("Testing empty selector with orderby option", []),
+  emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 2}],
+                                    [{<<"a">>, 1}]]),
+  Res = emongo:find_all(?POOL, ?COLL, [], [{fields, [{<<"_id">>, 0}]}, {orderby, [{<<"a">>, 1}]} | ?FIND_OPTIONS]),
+  ?assertEqual([[{<<"a">>, 1}],
+                [{<<"a">>, 2}]], Res),
+  clear_coll(),
+  ?assertEqual([], emongo:find_all(?POOL, ?COLL, [], ?FIND_OPTIONS)),
+  ?OUT("Test passed", []).
+
+test_count() ->
+  ?OUT("Testing count", []),
+  emongo:insert_sync(?POOL, ?COLL, [[{<<"a">>, 1}], [{<<"a">>, 2}], [{<<"a">>, 3}], [{<<"a">>, 4}], [{<<"a">>, 5}]]),
+  %?OUT("Resp = ~p", [emongo:count(?POOL, ?COLL, [{<<"$or">>, [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}],
+  %                                [response_options])]),
+  ?assertEqual(5, emongo:count(?POOL, ?COLL, [], ?FIND_OPTIONS)),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"a">>, [{lte, 3}]}], ?FIND_OPTIONS)),
+  ?assertEqual(2, emongo:count(?POOL, ?COLL, [{<<"a">>, [{gt,  3}]}], ?FIND_OPTIONS)),
+  ?assertEqual(4, emongo:count(?POOL, ?COLL, [{<<"$or">>,  [[{<<"a">>, [{lte, 2}]}], [{<<"a">>, [{gte, 4}]}]]}],
+                               ?FIND_OPTIONS)),
+  ?assertEqual(3, emongo:count(?POOL, ?COLL, [{<<"$and">>, [[{<<"a">>, [{gte, 2}]}], [{<<"a">>, [{lte, 4}]}]]}],
+                               ?FIND_OPTIONS)),
+  clear_coll(),
+  ?OUT("Test passed", []).
+
+test_encoding_performance() ->
+  ?OUT("Testing encoding performance", []),
+  {EncodeTime, ok} = timer:tc(fun() ->
+    lists:foreach(fun(_) ->
+      <<_/binary>> = emongo_bson:encode(?REALLY_BIG_DOCUMENT)
+    end, lists:seq(1, 1000))
+  end),
+  ?OUT("Encoding a really big document 1000 times took ~p microseconds", [EncodeTime]),
+  {WriteTime, ok} = timer:tc(fun() ->
+    lists:foreach(fun(_) ->
+      emongo:insert_sync(?POOL, ?COLL, ?REALLY_BIG_DOCUMENT)
+    end, lists:seq(1, 1000))
+  end),
+  ?OUT("Encoding and writing a really big document to DB 1000 times took ~p microseconds", [WriteTime]),
+  clear_coll(),
   ?OUT("Test passed", []).
 
 test_performance() ->
   ?OUT("Testing performance.", []),
-%   emongo:delete_sync(?POOL, ?COLL),
   Start = cur_time_ms(),
-%   try
-%     Ref = make_ref(),
-%     start_processes(Ref),
-%     block_until_done(Ref)
-%   after
-%     % Clean up in case something failed.
-%     emongo:delete_sync(?POOL, ?COLL)
-%   end,
+  Ref = make_ref(),
+  start_processes(Ref),
+  block_until_done(Ref),
+  clear_coll(),
   End = cur_time_ms(),
   ?OUT("Test passed in ~p ms\n", [End - Start]).
 
@@ -91,7 +145,7 @@ start_processes(Ref) ->
   Pid = self(),
   lists:foreach(fun(X) ->
     proc_lib:spawn(fun() ->
-      lists:foreach(fun(Y) ->
+      lists:map(fun(Y) ->
         run_single_test(X, Y)
       end, lists:seq(1, ?NUM_TESTS_PER_PID)),
       Pid ! {Ref, done}
@@ -114,7 +168,7 @@ run_single_test(X, Y) ->
       [{<<"$set">>, [{<<"us">>, Num}]}], false, [response_options]),
     ok = check_result("update_sync", URes, 1),
 
-    FARes = emongo:find_all(?POOL, ?COLL, Selector),
+    FARes = emongo:find_all(?POOL, ?COLL, Selector, ?FIND_OPTIONS),
     ?assertEqual([Selector ++ [{<<"fm">>, Num}, {<<"us">>, Num}]], FARes),
 
     DRes = emongo:delete_sync(?POOL, ?COLL, Selector, [response_options]),
@@ -137,13 +191,17 @@ check_result(Desc,
   end.
 
 block_until_done(Ref) ->
-  lists:foreach(fun(_) ->
-    receive {Ref, done} -> ok
-    after ?TIMEOUT ->
-      ?OUT("No response\n", []),
-      throw(test_failed)
-    end
-  end, lists:seq(1, ?NUM_PROCESSES)).
+  block_until_done(Ref, 0).
+
+block_until_done(_, ?NUM_PROCESSES) -> ok;
+block_until_done(Ref, NumDone) ->
+  ToAdd =
+    receive {Ref, done} -> 1
+    after 1000 ->
+      ?OUT("DB Queue Lengths: ~p", [emongo:queue_lengths()]),
+      0
+    end,
+  block_until_done(Ref, NumDone + ToAdd).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
