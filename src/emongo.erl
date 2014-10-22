@@ -38,12 +38,12 @@
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
-         run_command/3,
+         run_command/3, run_command/2,
          count/2, count/3, count/4,
          total_db_time_usec/0, db_timing/0, clear_timing/0,
          dec2hex/1, hex2dec/1, utf8_encode/1,
          drop_collection/2, drop_collection/3,
-         drop_database/1, drop_database/2]).
+         drop_database/1, drop_database/2, get_databases/1, get_databases/2]).
 
 -define(TIMING_KEY, emongo_timing).
 -define(MAX_TIMES,  10).
@@ -497,6 +497,33 @@ get_collections(PoolId, OptionsIn) ->
       end, [], Docs)
   end.
 
+get_databases(PoolId) -> get_databases(PoolId, []).
+
+get_databases(PoolId, OptionsIn) ->
+  Options = set_slave_ok(OptionsIn),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+
+  TQuery    = create_query(Options, [{<<"listDatabases">>, 1}]),
+  Query    = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Database = to_binary(get_database(Pool, undefined)),
+  Packet   = emongo_packet:do_query(Database, "$cmd", Pool#pool.req_id, Query),
+  Resp     = send_recv_command(get_databases, "$cmd", Query, Options, Conn, Pool, Packet),
+
+  RespOpts = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
+    #response{documents=[Res]} ->
+      case proplists:get_value(<<"ok">>, Res, undefined) of
+        undefined ->
+          case proplists:get_value(<<"errmsg">>, Res, undefined) of
+            undefined -> throw({get_databases_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
+            Error     -> throw({get_databases_failed, Error})
+          end;
+        _ -> ok
+      end
+  end.
+
+run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Query = #emo_query{q = Command},
