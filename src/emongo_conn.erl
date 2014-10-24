@@ -21,145 +21,164 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 %% OTHER DEALINGS IN THE SOFTWARE.
 -module(emongo_conn).
-
--export([start_link/3, init/4, stop/1, send/3, send_sync/5, send_recv/4]).
-
--record(request, {req_id, requestor}).
--record(state, {pool_id, socket, requests}).
-
 -include("emongo.hrl").
+-export([start_link/6, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
+-export([init_loop/6]).
 
-start_link(PoolId, Host, Port) ->
-	proc_lib:start_link(?MODULE, init, [PoolId, Host, Port, self()], ?TIMEOUT).
+-record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth, disconnect_timeouts, timeout_count = 0}).
 
-init(PoolId, Host, Port, Parent) ->
-	Socket = open_socket(Host, Port),
-	proc_lib:init_ack(Parent, self()),
-	loop(#state{pool_id=PoolId, socket=Socket, requests=[]}, <<>>).
+start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
+  Args = [PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions],
+  {ok, _} = proc_lib:start_link(?MODULE, init_loop, Args, ?CONN_TIMEOUT).
 
 stop(Pid) ->
-  Pid ! '$emongo_conn_close'.
+  Pid ! emongo_conn_close.
 
-send(Pid, ReqID, Packet) ->
-  gen_call(Pid, '$emongo_conn_send', ReqID, {ReqID, Packet}, ?TIMEOUT).
+send(Pid, ReqId, Packet, Timeout) ->
+  gen_call(Pid, emongo_conn_send, ReqId, {ReqId, Packet}, Timeout).
 
-send_sync(Pid, ReqID, Packet1, Packet2, Timeout) ->
-  Resp = gen_call(Pid, '$emongo_conn_send_sync', ReqID,
-                  {ReqID, Packet1, Packet2}, Timeout),
-	Documents = emongo_bson:decode(Resp#response.documents),
-	Resp#response{documents=Documents}.
+send_sync(Pid, ReqId, Packet1, Packet2, Timeout) ->
+  Resp = gen_call(Pid, emongo_conn_send_sync, ReqId,
+                  {ReqId, Packet1, Packet2}, Timeout),
+  Documents = emongo_bson:decode(Resp#response.documents),
+  Resp#response{documents=Documents}.
 
-send_recv(Pid, ReqID, Packet, Timeout) ->
-	Resp = gen_call(Pid, '$emongo_conn_send_recv', ReqID, {ReqID, Packet},
-	                Timeout),
-	Documents = emongo_bson:decode(Resp#response.documents),
-	Resp#response{documents=Documents}.
+send_recv(Pid, ReqId, Packet, Timeout) ->
+  Resp = gen_call(Pid, emongo_conn_send_recv, ReqId, {ReqId, Packet},
+                  Timeout),
+  Documents = emongo_bson:decode(Resp#response.documents),
+  Resp#response{documents=Documents}.
 
-gen_call(Pid, Label, ReqID, Request, Timeout) ->
-	case catch gen:call(Pid, Label, Request, Timeout) of
-		{ok, Result} -> Result;
-		{'EXIT', timeout} ->
-			% Clear the state from the timed out call
+queue_lengths(Pid) ->
+  case erlang:process_info(Pid, message_queue_len) of
+    {_, QueueLen} -> QueueLen;
+    _             -> 0
+  end.
+
+write_pid(Pid) -> Pid.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+init_loop(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
+  Socket = open_socket(Host, Port, SocketOptions),
+  ok = proc_lib:init_ack({ok, self()}),
+  loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth, disconnect_timeouts = DisconnectTimeouts}).
+
+loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
+  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) < MaxPipelineDepth),
+  NewState = try
+    _NewState = receive
+      % FromRef = {From, Mref}
+      {emongo_conn_send, FromRef, {_ReqId, Packet}} when CanSend ->
+        ok = gen_tcp:send(Socket, Packet),
+        gen:reply(FromRef, ok),
+        State;
+      {emongo_conn_send_sync, FromRef, {ReqId, Packet1, Packet2}} when CanSend ->
+        % Packet2 is the packet containing getlasterror.
+        % Send both packets in the same TCP packet for performance reasons.
+        % It's about 3 times faster.
+        ok = gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>),
+        State#state{dict = dict:append(ReqId, FromRef, Dict)};
+      {emongo_conn_send_recv, FromRef, {ReqId, Packet}} when CanSend ->
+        ok = gen_tcp:send(Socket, Packet),
+        State#state{dict = dict:append(ReqId, FromRef, Dict)};
+      {tcp, _Socket, NewData} ->
+        ProcState = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>}),
+        % We are receiving data on this socket, so clear timeout_count.
+        ProcState#state{timeout_count = 0};
+      {emongo_recv_timeout, FromRef, ReqId} ->
+        gen:reply(FromRef, ok),
+        % If the message related to this request is still in the mailbox waiting to be sent (when CanSend is true), go
+        % ahead and clear it out (without regard for how CanSend is set).
+        receive
+          {emongo_conn_send,      _FromRef, {ReqId, _}}    -> ok;
+          {emongo_conn_send_sync, _FromRef, {ReqId, _, _}} -> ok;
+          {emongo_conn_send_recv, _FromRef, {ReqId, _}}    -> ok
+        after 0 -> ok
+        end,
+        NewTimeoutCount = State#state.timeout_count + 1,
+        case NewTimeoutCount > State#state.disconnect_timeouts of
+          true -> exit(emongo_too_many_timeouts);
+          _    -> State#state{dict = dict:erase(ReqId, Dict), timeout_count = NewTimeoutCount}
+        end;
+      {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
+      {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
+      emongo_listen_exited         -> exit(emongo_listen_exited);
+      emongo_conn_close            -> exit(emongo_conn_close)
+    end
+  catch _:Error ->
+    gen_tcp:close(Socket),
+    % The Pids waiting for responses in Dict will get errors when this Pid exits.  They don't have to wait for a
+    % timeout.
+    % Throw a meaningful error that the emongo module can handle for connections that exit.
+    case Error of
+      emongo_conn_close ->
+        exit(normal);
+      _ ->
+        ?EXCEPTION("Exiting: ~p", [Error]),
+        exit({?MODULE, PoolId, Error})
+    end
+  end,
+  loop(PoolId, Socket, NewState).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+open_socket(Host, Port, SocketOptions) ->
+  Options = [binary, {active, true}, {keepalive, true} | SocketOptions], % {exit_on_close, true}
+  case gen_tcp:connect(Host, Port, Options) of
+    {ok, Sock}      -> Sock;
+    {error, Reason} -> exit({emongo_failed_to_open_socket, Reason})
+  end.
+
+gen_call(Pid, Label, ReqId, Request, Timeout) ->
+  try
+    case gen:call(Pid, Label, Request, Timeout) of
+      {ok, Result} -> Result;
+      Error        -> exit(Error)
+    end
+  catch
+    exit:timeout ->
+      % TODO: If the response to the gen:call() above comes back right in this gap (i.e. before the request has been
+      % cleared from the connection Pid's dictionary), the reply could be sent to this Pid's mailbox and never cleaned
+      % up.
       try
-        gen:call(Pid, '$emongo_recv_timeout', ReqID, Timeout)
+        % Tell the connection Pid that this call is timing out.
+        gen:call(Pid, emongo_recv_timeout, ReqId, Timeout)
       catch
-        _:{'EXIT', timeout} ->
-          % If a timeout occurred while trying to communicate with the
-          % connection pid, something is really backed up.  However, if this
-          % happens after a connection goes down, it's expected.
-          exit({emongo_conn_error, overloaded});
-        _:E -> E % Let the original error bubble up.
+        % If a timeout occurred while trying to communicate with the connection, something is really backed up.
+        % However, if this happens after a connection goes down, it's expected.
+        exit:timeout -> exit({emongo_conn_error, overloaded});
+        % Any other error should not override the timeout we are already handling.
+        _:E          -> E
       end,
-		  exit({emongo_conn_error, timeout});
-		Error -> exit({emongo_conn_error, Error})
-	end.
+      exit({emongo_conn_error, timeout});
+    _:_ ->
+      % If the connection Pid above exits before responding to this Pid, the gen:call() function above will exit with
+      % the exit status of the connection Pid.  For example, consider the following:
+      % try
+      %   gen:call(proc_lib:spawn(fun() ->
+      %     timer:sleep(100),
+      %     exit(emongo_tcp_closed)
+      %   end), test, {1, asdf}, 200)
+      % catch C:E ->
+      %   {C, E}
+      % end.
+      % That code returns: {exit,emongo_tcp_closed}
+      exit({emongo_conn_error, connection_closed})
+  end.
 
-loop(#state{socket = Socket} = State, Leftover) ->
-	{NewState, NewLeftover} = try
-		receive
-			{'$emongo_conn_send', {From, Mref}, {_ReqID, Packet}} ->
-				gen_tcp:send(Socket, Packet),
-				gen:reply({From, Mref}, ok),
-				{State, Leftover};
-			{'$emongo_conn_send_sync', {From, Mref}, {ReqID, Packet1, Packet2}} ->
-				% Packet2 is the packet containing getlasterror.
-				% Send both packets in the same TCP packet for performance reasons.
-				% It's about 3 times faster.
-				gen_tcp:send(Socket, <<Packet1/binary, Packet2/binary>>),
-				Request = #request{req_id=ReqID, requestor={From, Mref}},
-				State1 = State#state{requests=[{ReqID, Request} | State#state.requests]},
-				{State1, Leftover};
-			{'$emongo_conn_send_recv', {From, Mref}, {ReqID, Packet}} ->
-				gen_tcp:send(Socket, Packet),
-				Request = #request{req_id=ReqID, requestor={From, Mref}},
-				State1 = State#state{requests=[{ReqID, Request}|State#state.requests]},
-				{State1, Leftover};
-			{'$emongo_recv_timeout', {From, Mref}, ReqID} ->
-        % If this ReqID has timed out, everything behind it in the list has also
-        % timed out.  If the timeout message is missed, those requests still
-        % need to be cleaned up.  This will do that instead of only cleaning up
-        % the input ReqID.
-        Fun = fun({Req, _Request}) when Req == ReqID -> false;
-                 (_)                                 -> true
-              end,
-        NewReqs = lists:takewhile(Fun, State#state.requests),
-				gen:reply({From, Mref}, ok),
-
-				%Loop again, but drop any leftovers to
-				%prevent the loop response processing
-				%from getting out of sync and causing all
-				%subsequent calls to send_recv to fail.
-				%loop(State#state{requests=Others}, <<>>)
-
-				% Leave Leftover there because it could be from a different request than
-				% the one timing out.  This Pid is still in the pool and can still be
-				% used by other processes.  If the data gets out of sync, the socket
-				% needs to be closed and reopened.
-				{State#state{requests = NewReqs}, Leftover};
-			{tcp, Socket, Data} ->
-				{_NewState, _NewLeftover} =
-					process_bin(State, <<Leftover/binary, Data/binary>>);
-      '$emongo_conn_close' ->
-        exit(emongo_conn_close);
-			{tcp_closed, Socket} ->
-				exit(emongo_tcp_closed);
-			{tcp_error, Socket, Reason} ->
-				exit({emongo, Reason})
-		end
-	catch
-	  _:emongo_conn_close ->
-	    exit(normal);
-	  _:Error ->
-	    % The exit message has to include the pool_id and follow a format the
-	    % emongo module expects so this process can be restarted.
-	    exit({?MODULE, State#state.pool_id, Error})
-	end,
-	loop(NewState, NewLeftover).
-
-open_socket(Host, Port) ->
-	case gen_tcp:connect(Host, Port, [binary, {active, true}, {nodelay, true}]) of
-		{ok, Sock} ->
-			Sock;
-		{error, Reason} ->
-			exit({emongo_failed_to_open_socket, Reason})
-	end.
-
-process_bin(State, <<>>) ->
-	{State, <<>>};
-process_bin(State, Bin) ->
-	case emongo_packet:decode_response(Bin) of
-		undefined ->
-			{State, Bin};
-		{Resp, Tail} ->
-			ResponseTo = (Resp#response.header)#header.response_to,
-			NewState = case lists:keytake(ResponseTo, 1, State#state.requests) of
-				false ->
-					State;
-				{value, {_ReqID, Request}, Others} ->
-					gen:reply(Request#request.requestor, Resp),
-					State#state{requests=Others}
-			end,
-			% Continue processing Tail in case there's another complete message
-			% in it.
-			process_bin(NewState, Tail)
-	end.
+process_bin(State = #state{dict = Dict, socket_data = Data}) ->
+  case emongo_packet:decode_response(Data) of
+    undefined -> State;
+    {Resp = #response{header = #header{response_to = ResponseTo}}, Tail} ->
+      StateDict = try
+        [FromRef] = dict:fetch(ResponseTo, Dict),
+        gen:reply(FromRef, Resp),
+        State#state{dict = dict:erase(ResponseTo, Dict)}
+      catch _:badarg ->
+        % The request must have timed out.
+        State
+      end,
+      % Continue processing Tail in case there's another complete message in it.
+      process_bin(StateDict#state{socket_data = Tail})
+  end.
