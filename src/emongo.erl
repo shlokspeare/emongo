@@ -29,7 +29,7 @@
          pools/0, add_pool/5, add_pool/6, remove_pool/1,
          queue_lengths/0,
          register_collections_to_databases/2,
-         find/4, find_all/2, find_all/3, find_all/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
+         find/3, find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
          update_all_sync/5,
@@ -167,6 +167,8 @@ register_collections_to_databases(PoolId, CollDbMap) ->
 %     response_options = return {response, header, response_flag, cursor_id,
 %                                offset, limit, documents}
 %     Result = documents() | response()
+find(PoolId, Collection, Selector) -> find(PoolId, Collection, Selector, []).
+
 find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
                                                    is_list(OptionsIn) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
@@ -221,6 +223,7 @@ find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
 %------------------------------------------------------------------------------
 % get_more
 %------------------------------------------------------------------------------
+get_more(PoolId, Collection, CursorID, NumToReturn) -> get_more(PoolId, Collection, CursorID, NumToReturn, []).
 get_more(PoolId, Collection, CursorID, NumToReturn, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:get_more(get_database(Pool, Collection), Collection,
@@ -488,7 +491,7 @@ get_collections(PoolId, OptionsIn) ->
       DatabaseForSplit = <<Database/binary, ".">>,
       lists:foldl(fun(Doc, Accum) ->
         Collection = proplists:get_value(<<"name">>, Doc),
-        case binary:match(Collection, <<".$_">>) of
+        case binary:match(Collection, <<".$">>) of
           nomatch ->
             [_Junk, RealName] = binary:split(Collection, DatabaseForSplit),
             [ RealName | Accum ];
