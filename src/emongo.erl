@@ -529,7 +529,7 @@ get_databases(PoolId, OptionsIn) ->
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Query = #emo_query{q = Command},
+  Query = #emo_query{q = Command, limit=-1},
   Packet = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
   Resp = send_recv_command(command, "$cmd", Command, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
