@@ -836,7 +836,7 @@ dec2hex(N,<<>>) ->
   N.
 
 hex2dec(Hex) when is_list(Hex) ->
-  hex2dec(emongo_utils:as_binary(Hex));
+  hex2dec(list_to_binary(Hex));
 
 hex2dec(Hex) ->
   hex2dec(<<>>, Hex).
