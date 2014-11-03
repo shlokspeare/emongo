@@ -1,6 +1,6 @@
 {application, emongo, [
     {description, "Erlang MongoDB Driver"},
-    {vsn, "1.0.0"},
+    {vsn, "1.0.1"},
     {modules, [
 		emongo,
 		emongo_app,
