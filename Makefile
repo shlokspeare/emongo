@@ -24,7 +24,7 @@ out/abuild.mk: apackage.json | out
 $(APK): apackage.json $(TAR)
 	abuild package -r $< $@ $(TAR)
 
-$(TAR) Makefile:
+$(TAR): Makefile emake
 	rm -rf $(dir $(TMP))
 	install -d -m 0755 $(TMP)/ebin
 	install -m 0644 ebin/* $(TMP)/ebin/
