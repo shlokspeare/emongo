@@ -35,6 +35,7 @@
          update_all_sync/5,
          find_and_modify/4, find_and_modify/5,
          delete/2, delete/3, delete_sync/2, delete_sync/3, delete_sync/4,
+	 distinct/3, distinct/4, distinct/5,
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
@@ -525,6 +526,21 @@ get_databases(PoolId, OptionsIn) ->
         _ -> ok
       end
   end.
+
+distinct(PoolId, Collection, Key) -> distinct(PoolId, Collection, Key, [], []).
+distinct(PoolId, Collection, Key, Options) -> distinct(PoolId, Collection, Key, [], Options).
+distinct(PoolId, Collection, Key, SubQuery, Options) ->
+	Query0 = [
+		{ <<"distinct">>, Collection },
+		{ <<"key">>, Key }
+	],
+
+	Query = case SubQuery of
+		[] -> Query0;
+		_ -> [ { <<"query">>, SubQuery } | Query0 ]
+	end,
+
+	run_command(PoolId, Query, Options).
 
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
