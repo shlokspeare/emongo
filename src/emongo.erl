@@ -540,7 +540,15 @@ distinct(PoolId, Collection, Key, SubQuery, Options) ->
 		_ -> [ { <<"query">>, SubQuery } | Query0 ]
 	end,
 
-	run_command(PoolId, Query, Options).
+	case run_command(PoolId, Query, Options) of
+		[PL] when is_list(PL) ->
+			Values = proplists:get_value(<<"values">>, PL),
+			case Values of
+				{ 'array', L } when is_list(L) -> L;
+				_ -> throw({get_distinct_failed, PL})
+			end;
+		V -> throw({get_distinct_failed, V})
+	end.
 
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
