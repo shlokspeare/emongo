@@ -35,6 +35,7 @@
          update_all_sync/5,
          find_and_modify/4, find_and_modify/5,
          delete/2, delete/3, delete_sync/2, delete_sync/3, delete_sync/4,
+	 distinct/3, distinct/4, distinct/5,
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
@@ -525,6 +526,29 @@ get_databases(PoolId, OptionsIn) ->
         _ -> ok
       end
   end.
+
+distinct(PoolId, Collection, Key) -> distinct(PoolId, Collection, Key, [], []).
+distinct(PoolId, Collection, Key, Options) -> distinct(PoolId, Collection, Key, [], Options).
+distinct(PoolId, Collection, Key, SubQuery, Options) ->
+	Query0 = [
+		{ <<"distinct">>, Collection },
+		{ <<"key">>, Key }
+	],
+
+	Query = case SubQuery of
+		[] -> Query0;
+		_ -> [ { <<"query">>, SubQuery } | Query0 ]
+	end,
+
+	case run_command(PoolId, Query, Options) of
+		[PL] when is_list(PL) ->
+			Values = proplists:get_value(<<"values">>, PL),
+			case Values of
+				{ 'array', L } when is_list(L) -> L;
+				_ -> throw({get_distinct_failed, PL})
+			end;
+		V -> throw({get_distinct_failed, V})
+	end.
 
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
