@@ -29,7 +29,7 @@
          pools/0, add_pool/5, add_pool/6, remove_pool/1,
          queue_lengths/0,
          register_collections_to_databases/2,
-         find/4, find_all/2, find_all/3, find_all/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
+         find/3, find/4, find_all/2, find_all/3, find_all/4, get_more/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
          insert/3, insert_sync/3, insert_sync/4,
          update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
          update_all_sync/5,
@@ -38,12 +38,12 @@
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
-         run_command/3,
+         run_command/3, run_command/2,
          count/2, count/3, count/4,
          total_db_time_usec/0, db_timing/0, clear_timing/0,
          dec2hex/1, hex2dec/1, utf8_encode/1,
          drop_collection/2, drop_collection/3,
-         drop_database/1, drop_database/2]).
+         drop_database/1, drop_database/2, get_databases/1, get_databases/2]).
 
 -define(TIMING_KEY, emongo_timing).
 -define(MAX_TIMES,  10).
@@ -167,6 +167,8 @@ register_collections_to_databases(PoolId, CollDbMap) ->
 %     response_options = return {response, header, response_flag, cursor_id,
 %                                offset, limit, documents}
 %     Result = documents() | response()
+find(PoolId, Collection, Selector) -> find(PoolId, Collection, Selector, []).
+
 find(PoolId, Collection, Selector, OptionsIn) when ?IS_DOCUMENT(Selector),
                                                    is_list(OptionsIn) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
@@ -221,6 +223,7 @@ find_one(PoolId, Collection, Selector, Options) when ?IS_DOCUMENT(Selector),
 %------------------------------------------------------------------------------
 % get_more
 %------------------------------------------------------------------------------
+get_more(PoolId, Collection, CursorID, NumToReturn) -> get_more(PoolId, Collection, CursorID, NumToReturn, []).
 get_more(PoolId, Collection, CursorID, NumToReturn, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:get_more(get_database(Pool, Collection), Collection,
@@ -474,7 +477,7 @@ drop_collection(PoolId, Collection, Options) when is_atom(PoolId) ->
   end.
 
 get_collections(PoolId) -> get_collections(PoolId, []).
-get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
+get_collections(PoolId, OptionsIn) ->
   Options = set_slave_ok(OptionsIn),
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Query    = create_query(Options, []),
@@ -488,7 +491,7 @@ get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
       DatabaseForSplit = <<Database/binary, ".">>,
       lists:foldl(fun(Doc, Accum) ->
         Collection = proplists:get_value(<<"name">>, Doc),
-        case binary:match(Collection, <<".$_">>) of
+        case binary:match(Collection, <<".$">>) of
           nomatch ->
             [_Junk, RealName] = binary:split(Collection, DatabaseForSplit),
             [ RealName | Accum ];
@@ -497,9 +500,36 @@ get_collections(PoolId, OptionsIn) when is_atom(PoolId) ->
       end, [], Docs)
   end.
 
+get_databases(PoolId) -> get_databases(PoolId, []).
+
+get_databases(PoolId, OptionsIn) ->
+  Options = set_slave_ok(OptionsIn),
+  {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+
+  TQuery   = create_query(Options, [{<<"listDatabases">>, 1}]),
+  Query    = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
+  Database = to_binary(get_database(Pool, undefined)),
+  Packet   = emongo_packet:do_query(Database, "$cmd", Pool#pool.req_id, Query),
+  Resp     = send_recv_command(get_databases, "$cmd", Query, Options, Conn, Pool, Packet),
+
+  RespOpts = lists:member(response_options, Options),
+  case Resp of
+    _ when RespOpts -> Resp;
+    #response{documents=[Res]} ->
+      case proplists:get_value(<<"ok">>, Res, undefined) of
+        undefined ->
+          case proplists:get_value(<<"errmsg">>, Res, undefined) of
+            undefined -> throw({get_databases_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
+            Error     -> throw({get_databases_failed, Error})
+          end;
+        _ -> ok
+      end
+  end.
+
+run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
-  Query = #emo_query{q = Command},
+  Query = #emo_query{q = Command, limit=-1},
   Packet = emongo_packet:do_query(get_database(Pool, undefined), "$cmd", Pool#pool.req_id, Query),
   Resp = send_recv_command(command, "$cmd", Command, Options, Conn, Pool, Packet),
   case lists:member(response_options, Options) of
