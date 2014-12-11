@@ -506,7 +506,7 @@ get_databases(PoolId, OptionsIn) ->
   Options = set_slave_ok(OptionsIn),
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
 
-  TQuery    = create_query(Options, [{<<"listDatabases">>, 1}]),
+  TQuery   = create_query(Options, [{<<"listDatabases">>, 1}]),
   Query    = TQuery#emo_query{limit=-1}, %dont ask me why, it just has to be -1
   Database = to_binary(get_database(Pool, undefined)),
   Packet   = emongo_packet:do_query(Database, "$cmd", Pool#pool.req_id, Query),
