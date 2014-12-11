@@ -660,25 +660,13 @@ handle_cast(_Msg, State) ->
 %                     {stop, Reason, State}
 % Description: Handling all non call/cast messages
 %--------------------------------------------------------------------
-handle_info({'EXIT', _, normal}, State) ->
+handle_info({'EXIT', _, shudown}, State) ->
   {noreply, State};
 
-handle_info({'EXIT', Pid, {emongo_conn, PoolId, Error}},
-            #state{pools=Pools}=State) ->
-  ?ERROR("EXIT ~p, {emongo_conn, ~p, ~p} in ~p~n", [Pid, PoolId, Error, ?MODULE]),
-  NewState =
-    case get_pool(PoolId, Pools) of
-      undefined -> State;
-      {Pool = #pool{conns = Conns}, Others} ->
-        NewConns = queue:filter(fun(Conn) -> emongo_conn:write_pid(Conn) =/= Pid end, Conns),
-        FilPool = Pool#pool{conns = NewConns},
-        NewPools = case do_open_connections(FilPool) of
-          {error, _Reason} -> Others;
-          NewPool          -> [{PoolId, NewPool} | Others]
-        end,
-        State#state{pools = NewPools}
-    end,
-  {noreply, NewState};
+handle_info({'EXIT', Pid, Error}, #state{pools = Pools} = State) ->
+  ?ERROR("EXIT ~p, ~p in ~p~n", [Pid, Error, ?MODULE]),
+  NewPools = cleanup_pid(Pid, Pools),
+  {noreply, State#state{pools = NewPools}};
 
 handle_info(Info, State) ->
   ?WARN("Unrecognized message in ~p: ~p~n", [?MODULE, Info]),
@@ -736,6 +724,18 @@ do_open_connections(#pool{id                  = PoolId,
       NewPool = do_auth(Conn, Pool),
       do_open_connections(NewPool#pool{conns = queue:in(Conn, Conns)});
     false -> Pool
+  end.
+
+cleanup_pid(_Pid, []) -> ok; % Pid not found; no cleanup necessary
+cleanup_pid(Pid, [{PoolId, Pool} | Others]) ->
+  FilConns = queue:filter(fun(Conn) -> emongo_conn:write_pid(Conn) =/= Pid end, Pool#pool.conns),
+  case queue:len(FilConns) == queue:len(Pool#pool.conns) of
+    true  ->
+      [{PoolId, Pool} | cleanup_pid(Pid, Others)];
+    false ->
+      FilPool = Pool#pool{conns = FilConns},
+      NewPool = do_open_connections(FilPool),
+      [{PoolId, NewPool} | Others]
   end.
 
 pass_hash(undefined, undefined) -> undefined;

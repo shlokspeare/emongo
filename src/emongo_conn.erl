@@ -25,7 +25,16 @@
 -export([start_link/6, stop/1, send/4, send_sync/5, send_recv/4, queue_lengths/1, write_pid/1]).
 -export([init_loop/6]).
 
--record(state, {dict = dict:new(), socket_data = <<>>, max_pipeline_depth, disconnect_timeouts, timeout_count = 0}).
+-record(state, {pool_id,
+                socket,
+                host,
+                port,
+                socket_options,
+                dict = dict:new(),
+                socket_data = <<>>,
+                max_pipeline_depth,
+                disconnect_timeouts,
+                timeout_count = 0}).
 
 start_link(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
   Args = [PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions],
@@ -62,10 +71,17 @@ write_pid(Pid) -> Pid.
 init_loop(PoolId, Host, Port, MaxPipelineDepth, DisconnectTimeouts, SocketOptions) ->
   Socket = open_socket(Host, Port, SocketOptions),
   ok = proc_lib:init_ack({ok, self()}),
-  loop(PoolId, Socket, #state{max_pipeline_depth = MaxPipelineDepth, disconnect_timeouts = DisconnectTimeouts}).
+  loop(#state{pool_id             = PoolId,
+              socket              = Socket,
+              host                = Host,
+              port                = Port,
+              socket_options      = SocketOptions,
+              max_pipeline_depth  = MaxPipelineDepth,
+              disconnect_timeouts = DisconnectTimeouts}).
 
-loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipeline_depth = MaxPipelineDepth}) ->
-  CanSend = (MaxPipelineDepth == 0) or (dict:size(Dict) < MaxPipelineDepth),
+loop(State = #state{socket = Socket,
+                    dict   = Dict}) ->
+  CanSend = (State#state.max_pipeline_depth == 0) or (dict:size(Dict) < State#state.max_pipeline_depth),
   NewState = try
     _NewState = receive
       % FromRef = {From, Mref}
@@ -83,7 +99,7 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
         ok = gen_tcp:send(Socket, Packet),
         State#state{dict = dict:append(ReqId, FromRef, Dict)};
       {tcp, _Socket, NewData} ->
-        ProcState = process_bin(State#state{socket_data = <<OldData/binary, NewData/binary>>}),
+        ProcState = process_bin(State#state{socket_data = <<(State#state.socket_data)/binary, NewData/binary>>}),
         % We are receiving data on this socket, so clear timeout_count.
         ProcState#state{timeout_count = 0};
       {emongo_recv_timeout, FromRef, ReqId} ->
@@ -99,27 +115,28 @@ loop(PoolId, Socket, State = #state{dict = Dict, socket_data = OldData, max_pipe
         NewTimeoutCount = State#state.timeout_count + 1,
         case NewTimeoutCount > State#state.disconnect_timeouts of
           true -> exit(emongo_too_many_timeouts);
-          _    -> State#state{dict = dict:erase(ReqId, Dict), timeout_count = NewTimeoutCount}
+          _    -> State#state{dict          = dict:erase(ReqId, Dict),
+                              timeout_count = NewTimeoutCount}
         end;
       {tcp_closed, _Socket}        -> exit(emongo_tcp_closed);
       {tcp_error, _Socket, Reason} -> exit({emongo, Reason});
       emongo_listen_exited         -> exit(emongo_listen_exited);
       emongo_conn_close            -> exit(emongo_conn_close)
     end
-  catch _:Error ->
+  catch Class:Error ->
     gen_tcp:close(Socket),
     % The Pids waiting for responses in Dict will get errors when this Pid exits.  They don't have to wait for a
     % timeout.
     % Throw a meaningful error that the emongo module can handle for connections that exit.
     case Error of
-      emongo_conn_close ->
-        exit(normal);
-      _ ->
+      emongo_conn_close        -> exit(shudown);
+      emongo_too_many_timeouts -> exit(normal);
+      _                        ->
         ?EXCEPTION("Exiting: ~p", [Error]),
-        exit({?MODULE, PoolId, Error})
+        erlang:raise(Class, Error, erlang:get_stacktrace())
     end
   end,
-  loop(PoolId, Socket, NewState).
+  loop(NewState).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -167,7 +184,8 @@ gen_call(Pid, Label, ReqId, Request, Timeout) ->
       exit({emongo_conn_error, connection_closed})
   end.
 
-process_bin(State = #state{dict = Dict, socket_data = Data}) ->
+process_bin(State = #state{dict        = Dict,
+                           socket_data = Data}) ->
   case emongo_packet:decode_response(Data) of
     undefined -> State;
     {Resp = #response{header = #header{response_to = ResponseTo}}, Tail} ->
