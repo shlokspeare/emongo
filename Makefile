@@ -45,3 +45,6 @@ check: emake
 
 clean:
 	rm -rf $(wildcard ebin/*.beam) erl_crash.dump .eunit/ out/
+
+PROJECT = emongo
+include erlangmk-dialyzer.mk
