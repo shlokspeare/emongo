@@ -769,7 +769,8 @@ initialize_pools() ->
           size     = proplists:get_value(size, Props, 1),
           host     = proplists:get_value(host, Props, "localhost"),
           port     = proplists:get_value(port, Props, 27017),
-          database = proplists:get_value(database, Props, "test")
+          database = proplists:get_value(database, Props, "test"),
+          timeout = proplists:get_value(timeout, Props, 5000)
         },
         {PoolId, do_open_connections(Pool)}
        end || {PoolId, Props} <- Pools]
