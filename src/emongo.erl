@@ -29,12 +29,19 @@
          pools/0, add_pool/5, add_pool/6, remove_pool/1,
          queue_lengths/0,
          register_collections_to_databases/2,
-         find/4, find_all/2, find_all/3, find_all/4, get_more/5, find_one/3, find_one/4, kill_cursors/2,
-         insert/3, insert_sync/3, insert_sync/4,
-         update/4, update/5, update_all/4, update_sync/4, update_sync/5, update_sync/6, update_all_sync/4,
-         update_all_sync/5,
+         find/4,
+         find_all/2, find_all/3, find_all/4, get_more/5,
+         find_one/3, find_one/4,
+         kill_cursors/2,
+         insert/3,
+         insert_sync/3, insert_sync/4,
+         update/4, update/5, update/6,
+         update_all/4, update_all/5,
+         update_sync/4, update_sync/5, update_sync/6,
+         update_all_sync/4, update_all_sync/5,
          find_and_modify/4, find_and_modify/5,
-         delete/2, delete/3, delete_sync/2, delete_sync/3, delete_sync/4,
+         delete/2, delete/3, delete/4,
+         delete_sync/2, delete_sync/3, delete_sync/4,
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
@@ -231,10 +238,11 @@ kill_cursors(PoolId, CursorIDs) when is_list(CursorIDs) ->
 %------------------------------------------------------------------------------
 % insert
 %------------------------------------------------------------------------------
-insert(PoolId, Collection, Document) when ?IS_DOCUMENT(Document) ->
-  insert(PoolId, Collection, [Document]);
-
-insert(PoolId, Collection, Documents) when ?IS_LIST_OF_DOCUMENTS(Documents) ->
+insert(PoolId, Collection, DocumentsIn) ->
+  Documents = if
+    ?IS_LIST_OF_DOCUMENTS(DocumentsIn) -> DocumentsIn;
+    ?IS_DOCUMENT(DocumentsIn)          -> [DocumentsIn]
+  end,
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
   Packet = emongo_packet:insert(get_database(Pool, Collection), Collection,
                                 Pool#pool.req_id, Documents),
@@ -250,9 +258,8 @@ insert_sync(PoolId, Collection, Documents) ->
 insert_sync(PoolId, Collection, DocumentsIn, Options) ->
   Documents = if
     ?IS_LIST_OF_DOCUMENTS(DocumentsIn) -> DocumentsIn;
-    ?IS_DOCUMENT(DocumentsIn)      -> [DocumentsIn]
+    ?IS_DOCUMENT(DocumentsIn)          -> [DocumentsIn]
   end,
-
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
   Packet1 = emongo_packet:insert(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id, Documents),
@@ -265,22 +272,30 @@ update(PoolId, Collection, Selector, Document) when ?IS_DOCUMENT(Selector),
                                                     ?IS_DOCUMENT(Document) ->
   update(PoolId, Collection, Selector, Document, false).
 
-update(PoolId, Collection, Selector, Document, Upsert)
+update(PoolId, Collection, Selector, Document, Upsert) ->
+  update(PoolId, Collection, Selector, Document, Upsert, []).
+
+update(PoolId, Collection, Selector, Document, Upsert, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  Query = create_query(Options, Selector),
   Packet = emongo_packet:update(get_database(Pool, Collection), Collection,
-                                Pool#pool.req_id, Upsert, false, Selector,
+                                Pool#pool.req_id, Upsert, false, Query#emo_query.q,
                                 Document),
   send_command(update, Collection, Selector, [{upsert, Upsert}], Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % update_all
 %------------------------------------------------------------------------------
-update_all(PoolId, Collection, Selector, Document)
+update_all(PoolId, Collection, Selector, Document) ->
+  update_all(PoolId, Collection, Selector, Document, []).
+
+update_all(PoolId, Collection, Selector, Document, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  Query = create_query(Options, Selector),
   Packet = emongo_packet:update(get_database(Pool, Collection), Collection,
-                                Pool#pool.req_id, false, true, Selector,
+                                Pool#pool.req_id, false, true, Query#emo_query.q,
                                 Document),
   send_command(update_all, Collection, Selector, [], Conn, Pool, Packet).
 
@@ -301,8 +316,9 @@ update_sync(PoolId, Collection, Selector, Document, Upsert)
 update_sync(PoolId, Collection, Selector, Document, Upsert, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
+  Query = create_query(Options, Selector),
   Packet1 = emongo_packet:update(get_database(Pool, Collection), Collection,
-                                 Pool#pool.req_id, Upsert, false, Selector,
+                                 Pool#pool.req_id, Upsert, false, Query#emo_query.q,
                                  Document),
   Options1 = case Upsert of
     true -> Options;
@@ -321,8 +337,9 @@ update_all_sync(PoolId, Collection, Selector, Document)
 update_all_sync(PoolId, Collection, Selector, Document, Options)
     when ?IS_DOCUMENT(Selector), ?IS_DOCUMENT(Document) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
+  Query = create_query(Options, Selector),
   Packet1 = emongo_packet:update(get_database(Pool, Collection), Collection,
-                                 Pool#pool.req_id, false, true, Selector,
+                                 Pool#pool.req_id, false, true, Query#emo_query.q,
                                  Document),
   % We could check <<"n">> as the update_sync(...) functions do, but
   % update_all_sync(...) isn't targeting a specific number of documents, so 0
@@ -336,10 +353,14 @@ delete(PoolId, Collection) ->
   delete(PoolId, Collection, []).
 
 delete(PoolId, Collection, Selector) ->
+  delete(PoolId, Collection, Selector, []).
+
+delete(PoolId, Collection, Selector, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
+  Query = create_query(Options, Selector),
   Packet = emongo_packet:delete(get_database(Pool, Collection), Collection,
-                                Pool#pool.req_id, transform_selector(Selector)),
-  send_command(delete, Collection, Selector, [], Conn, Pool, Packet).
+                                Pool#pool.req_id, Query#emo_query.q),
+  send_command(delete, Collection, Selector, Options, Conn, Pool, Packet).
 
 %------------------------------------------------------------------------------
 % delete_sync that runs db.$cmd.findOne({getlasterror: 1});
@@ -355,9 +376,10 @@ delete_sync(PoolId, Collection, Selector) ->
 
 delete_sync(PoolId, Collection, Selector, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId, 2}, infinity),
+  Query = create_query(Options, Selector),
   Packet1 = emongo_packet:delete(get_database(Pool, Collection), Collection,
                                  Pool#pool.req_id,
-                                 transform_selector(Selector)),
+                                 Query#emo_query.q),
   sync_command(delete_sync, Collection, Selector, [check_match_found | Options], Conn, Pool, Packet1).
 
 %------------------------------------------------------------------------------
