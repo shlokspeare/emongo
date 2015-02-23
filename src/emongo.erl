@@ -35,6 +35,7 @@
          update_all_sync/5,
          find_and_modify/4, find_and_modify/5,
          delete/2, delete/3, delete_sync/2, delete_sync/3, delete_sync/4,
+	 distinct/3, distinct/4, distinct/5,
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
@@ -526,6 +527,29 @@ get_databases(PoolId, OptionsIn) ->
       end
   end.
 
+distinct(PoolId, Collection, Key) -> distinct(PoolId, Collection, Key, [], []).
+distinct(PoolId, Collection, Key, Options) -> distinct(PoolId, Collection, Key, [], Options).
+distinct(PoolId, Collection, Key, SubQuery, Options) ->
+	Query0 = [
+		{ <<"distinct">>, Collection },
+		{ <<"key">>, Key }
+	],
+
+	Query = case SubQuery of
+		[] -> Query0;
+		_ -> [ { <<"query">>, SubQuery } | Query0 ]
+	end,
+
+	case run_command(PoolId, Query, Options) of
+		[PL] when is_list(PL) ->
+			Values = proplists:get_value(<<"values">>, PL),
+			case Values of
+				{ 'array', L } when is_list(L) -> L;
+				_ -> throw({get_distinct_failed, PL})
+			end;
+		V -> throw({get_distinct_failed, V})
+	end.
+
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
 run_command(PoolId, Command, Options) ->
   {Conn, Pool} = gen_server:call(?MODULE, {conn, PoolId}, infinity),
@@ -653,10 +677,23 @@ handle_call({conn, PoolId, NumReqs}, _From, #state{pools = Pools} = State) ->
     {Pool, Others} ->
       case queue:out(Pool#pool.conns) of
         {{value, Conn}, Q2} ->
-          Pool1 = Pool#pool{conns = queue:in(Conn, Q2),
-                            req_id = ((Pool#pool.req_id) + NumReqs)},
+          TNextReq = ((Pool#pool.req_id) + NumReqs),
+          %if we rollover our requests number, then we will not be able to match up the
+          %response with the caller and not perform a gen_server:reply in emongo_conn:process_bin
+          {RetPool, Pool1} = case TNextReq >= 2147483648 of
+            true ->
+                {
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = 1},
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = NumReqs + 1}
+                };
+            false ->
+                {
+                    Pool,
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = TNextReq}
+                }
+        end,
           Pools1 = [{PoolId, Pool1}|Others],
-          {reply, {Conn, Pool}, State#state{pools=Pools1}};
+          {reply, {Conn, RetPool}, State#state{pools=Pools1}};
         {empty, _} ->
           {reply, {undefined, Pool}, State}
       end
@@ -745,7 +782,8 @@ initialize_pools() ->
           size     = proplists:get_value(size, Props, 1),
           host     = proplists:get_value(host, Props, "localhost"),
           port     = proplists:get_value(port, Props, 27017),
-          database = proplists:get_value(database, Props, "test")
+          database = proplists:get_value(database, Props, "test"),
+          timeout = proplists:get_value(timeout, Props, 5000)
         },
         {PoolId, do_open_connections(Pool)}
        end || {PoolId, Props} <- Pools]
