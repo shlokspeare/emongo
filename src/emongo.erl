@@ -677,10 +677,23 @@ handle_call({conn, PoolId, NumReqs}, _From, #state{pools = Pools} = State) ->
     {Pool, Others} ->
       case queue:out(Pool#pool.conns) of
         {{value, Conn}, Q2} ->
-          Pool1 = Pool#pool{conns = queue:in(Conn, Q2),
-                            req_id = ((Pool#pool.req_id) + NumReqs)},
+          TNextReq = ((Pool#pool.req_id) + NumReqs),
+          %if we rollover our requests number, then we will not be able to match up the
+          %response with the caller and not perform a gen_server:reply in emongo_conn:process_bin
+          {RetPool, Pool1} = case TNextReq >= 2147483648 of
+            true ->
+                {
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = 1},
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = NumReqs + 1}
+                };
+            false ->
+                {
+                    Pool,
+                    Pool#pool{conns = queue:in(Conn, Q2), req_id = TNextReq}
+                }
+        end,
           Pools1 = [{PoolId, Pool1}|Others],
-          {reply, {Conn, Pool}, State#state{pools=Pools1}};
+          {reply, {Conn, RetPool}, State#state{pools=Pools1}};
         {empty, _} ->
           {reply, {undefined, Pool}, State}
       end
