@@ -34,6 +34,7 @@ run_test_() ->
       fun test_upsert/0,
       fun test_fetch_collections/0,
       fun test_timing/0,
+      fun test_req_id_rollover/0,
       fun test_drop_collection/0,
       fun test_drop_database/0,
       fun test_upsert/0, % rerun upsert to make sure we can still do our work
@@ -66,6 +67,13 @@ test_upsert() ->
 test_fetch_collections() ->
   ?OUT("Testing fetch collections", []),
   [<<"system.indexes">>, ?COLL] = lists:sort(emongo:get_collections(?POOL, ?FIND_OPTIONS)),
+  ?OUT("Test passed", []).
+
+test_req_id_rollover() ->
+  ?OUT("Testing req ID rollover", []),
+  {_, _} = gen_server:call(emongo, {conn, ?POOL, 2147483000}, infinity),
+  {_, #pool{req_id = NextReq}} = gen_server:call(emongo, {conn, ?POOL, 1000000000}, infinity),
+  ?assertEqual(1, NextReq),
   ?OUT("Test passed", []).
 
 test_timing() ->

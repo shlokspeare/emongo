@@ -43,6 +43,7 @@
          find_and_modify/4, find_and_modify/5,
          delete/2, delete/3, delete/4,
          delete_sync/2, delete_sync/3, delete_sync/4,
+         distinct/3, distinct/4, distinct/5,
          ensure_index/4,
          aggregate/3, aggregate/4,
          get_collections/1, get_collections/2,
@@ -112,6 +113,9 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size) ->
 %   % and reconnect.  0 means even the first timeout will cause a disconnect and reconnect.
 %   {disconnect_timeouts, int()}
 add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
+  gen_server:call(?MODULE, {add_pool, create_pool(PoolId, Host, Port, DefaultDatabase, Size, Options)}, infinity).
+
+create_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
   Def = #pool{},
   Timeout             = proplists:get_value(timeout,               Options, Def#pool.timeout),
   User      = to_binary(proplists:get_value(user,                  Options, Def#pool.user)),
@@ -121,20 +125,19 @@ add_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
   WriteConcern        = proplists:get_value(write_concern,         Options, Def#pool.write_concern),
   WriteConcernTimeout = proplists:get_value(write_concern_timeout, Options, Def#pool.write_concern_timeout),
   DisconnectTimeouts  = proplists:get_value(disconnect_timeouts,   Options, Def#pool.disconnect_timeouts),
-  Pool = #pool{id                    = PoolId,
-               host                  = Host,
-               port                  = Port,
-               database              = DefaultDatabase,
-               size                  = Size,
-               timeout               = Timeout,
-               user                  = User,
-               pass_hash             = pass_hash(User, Password),
-               max_pipeline_depth    = MaxPipelineDepth,
-               socket_options        = SocketOptions,
-               write_concern         = WriteConcern,
-               write_concern_timeout = WriteConcernTimeout,
-               disconnect_timeouts   = DisconnectTimeouts},
-  gen_server:call(?MODULE, {add_pool, Pool}, infinity).
+  #pool{id                    = PoolId,
+        host                  = Host,
+        port                  = Port,
+        database              = DefaultDatabase,
+        size                  = Size,
+        timeout               = Timeout,
+        user                  = User,
+        pass_hash             = pass_hash(User, Password),
+        max_pipeline_depth    = MaxPipelineDepth,
+        socket_options        = SocketOptions,
+        write_concern         = WriteConcern,
+        write_concern_timeout = WriteConcernTimeout,
+        disconnect_timeouts   = DisconnectTimeouts}.
 
 remove_pool(PoolId) ->
   gen_server:call(?MODULE, {remove_pool, PoolId}).
@@ -542,11 +545,34 @@ get_databases(PoolId, OptionsIn) ->
       case proplists:get_value(<<"ok">>, Res, undefined) of
         undefined ->
           case proplists:get_value(<<"errmsg">>, Res, undefined) of
-            undefined -> throw({get_databases_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
-            Error     -> throw({get_databases_failed, Error})
+            undefined -> throw({emongo_get_databases_failed, proplists:get_value(<<"msg">>, Res, <<>>)});
+            Error     -> throw({emongo_get_databases_failed, Error})
           end;
         _ -> ok
       end
+  end.
+
+distinct(PoolId, Collection, Key) -> distinct(PoolId, Collection, Key, [], []).
+distinct(PoolId, Collection, Key, Options) -> distinct(PoolId, Collection, Key, [], Options).
+distinct(PoolId, Collection, Key, SubQuery, Options) ->
+  Query0 = [
+    { <<"distinct">>, Collection },
+    { <<"key">>, Key }
+  ],
+
+  Query = case SubQuery of
+    [] -> Query0;
+    _ -> [ { <<"query">>, SubQuery } | Query0 ]
+  end,
+
+  case run_command(PoolId, Query, Options) of
+    [PL] when is_list(PL) ->
+      Values = proplists:get_value(<<"values">>, PL),
+      case Values of
+        { 'array', L } when is_list(L) -> L;
+        _ -> throw({emongo_get_distinct_failed, PL})
+      end;
+    V -> throw({emongo_get_distinct_failed, V})
   end.
 
 run_command(PoolId, Command) -> run_command(PoolId, Command, []).
@@ -676,10 +702,23 @@ handle_call({conn, PoolId, NumReqs}, _From, #state{pools = Pools} = State) ->
     {Pool, Others} ->
       case queue:out(Pool#pool.conns) of
         {{value, Conn}, Q2} ->
-          Pool1 = Pool#pool{conns = queue:in(Conn, Q2),
-                            req_id = ((Pool#pool.req_id) + NumReqs)},
-          Pools1 = [{PoolId, Pool1}|Others],
-          {reply, {Conn, Pool}, State#state{pools=Pools1}};
+          TNextReq = ((Pool#pool.req_id) + NumReqs),
+          %if we rollover our requests number, then we will not be able to match up the
+          %response with the caller and not perform a gen_server:reply in emongo_conn:process_bin
+          {RetPool, Pool1} = case TNextReq >= 16#80000000 of % Signed, 32-bit max, used by emongo_packet.erl
+            true ->
+              {
+                Pool#pool{conns = queue:in(Conn, Q2), req_id = 1},
+                Pool#pool{conns = queue:in(Conn, Q2), req_id = 1 + NumReqs}
+              };
+            false ->
+              {
+                Pool,
+                Pool#pool{conns = queue:in(Conn, Q2), req_id = TNextReq}
+              }
+          end,
+          Pools1 = [{PoolId, Pool1} | Others],
+          {reply, {Conn, RetPool}, State#state{pools=Pools1}};
         {empty, _} ->
           {reply, {undefined, Pool}, State}
       end
@@ -751,15 +790,13 @@ initialize_pools() ->
       [];
     {ok, Pools} ->
       [begin
-        Pool = #pool{
-          id       = PoolId,
-          size     = proplists:get_value(size, Props, 1),
-          host     = proplists:get_value(host, Props, "localhost"),
-          port     = proplists:get_value(port, Props, 27017),
-          database = proplists:get_value(database, Props, "test")
-        },
+        Host            = proplists:get_value(host,     Options, "localhost"),
+        Port            = proplists:get_value(port,     Options, 27017),
+        DefaultDatabase = proplists:get_value(database, Options, "test"),
+        Size            = proplists:get_value(size,     Options, 1),
+        Pool            = create_pool(PoolId, Host, Port, DefaultDatabase, Size, Options),
         {PoolId, do_open_connections(Pool)}
-       end || {PoolId, Props} <- Pools]
+       end || {PoolId, Options} <- Pools]
   end.
 
 do_open_connections(#pool{id                  = PoolId,
