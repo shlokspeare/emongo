@@ -126,7 +126,7 @@ create_pool(PoolId, Host, Port, DefaultDatabase, Size, Options) ->
   WriteConcernTimeout = proplists:get_value(write_concern_timeout, Options, Def#pool.write_concern_timeout),
   DisconnectTimeouts  = proplists:get_value(disconnect_timeouts,   Options, Def#pool.disconnect_timeouts),
   #pool{id                    = PoolId,
-        host                  = Host,
+        host                  = to_list(Host),
         port                  = Port,
         database              = DefaultDatabase,
         size                  = Size,
@@ -1159,6 +1159,11 @@ to_binary(undefined)           -> undefined;
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V)   -> list_to_binary(V);
 to_binary(V) when is_atom(V)   -> list_to_binary(atom_to_list(V)).
+
+to_list(undefined)           -> undefined;
+to_list(V) when is_list(V)   -> V;
+to_list(V) when is_binary(V) -> binary_to_list(V);
+to_list(V) when is_atom(V)   -> atom_to_list(V).
 
 convert_fields([])                    -> [];
 convert_fields([{Field, Val} | Rest]) -> [{Field, Val} | convert_fields(Rest)];
