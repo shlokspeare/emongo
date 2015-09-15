@@ -1018,6 +1018,7 @@ convert_key(where)     -> <<"$where">>;
 convert_key(elemMatch) -> <<"$elemMatch">>;
 convert_key(maxDistance) -> <<"$maxDistance">>;
 convert_key(geoWithin) -> <<"$geoWithin">>;
+
 convert_key(center) -> <<"$center">>.
 
 force_data_type(<<"$in">>)  -> array;
