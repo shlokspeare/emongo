@@ -1018,8 +1018,12 @@ convert_key(where)     -> <<"$where">>;
 convert_key(elemMatch) -> <<"$elemMatch">>;
 convert_key(maxDistance) -> <<"$maxDistance">>;
 convert_key(geoWithin) -> <<"$geoWithin">>;
-
-convert_key(center) -> <<"$center">>.
+convert_key(center) -> <<"$center">>;
+convert_key(skip) -> <<"$skip">>; %incase offset does not work
+convert_key(centerSphere) -> <<"$centerSphere">>;
+convert_key(match) -> <<"$match">>; 
+convert_key(regex) -> <<"$regex">>;
+convert_key(sort) -> <<"$sort">>.
 
 force_data_type(<<"$in">>)  -> array;
 force_data_type(<<"$nin">>) -> array;
